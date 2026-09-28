@@ -583,8 +583,9 @@ void CHud::RenderTextInfo()
 	// bestclient
 	if(GameClient()->m_FastPractice.Enabled())
 	{
-		constexpr const char *pLine1 = "practice mode";
-		constexpr const char *pLine2 = "(you can use practice commands /tc /invincible)";
+		const bool IsTas = GameClient()->m_Tas.IsRecordingActive();
+		const char *pLine1 = IsTas ? "tas mode" : "practice mode";
+		const char *pLine2 = IsTas ? (GameClient()->m_Tas.IsWaterCrossingActive() ? "(TAS water crossing mode active)" : "(TAS recording in progress)") : "(you can use practice commands /tc /invincible)";
 		const float Line1Size = 10.0f;
 		const float Line2Size = 8.0f;
 		const float Line1X = m_Width / 2.0f - TextRender()->TextWidth(Line1Size, pLine1, -1, -1.0f) / 2.0f;

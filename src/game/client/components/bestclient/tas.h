@@ -82,6 +82,8 @@ public:
 	void SaveCheckpoint();
 	void LoadCheckpoint();
 	void Rewind(int NumTicks, bool IsAutoHazard = false);
+	void RollbackToTick(int TargetTick);
+	void ToggleWaterCrossing();
 	void Clear();
 
 	bool SaveToFile(const char *pFilename);
@@ -106,6 +108,8 @@ public:
 	bool IsPlaybackActive() const { return m_State == STATE_PLAYING; }
 	bool IsRecordingActive() const { return m_State == STATE_RECORDING; }
 	bool IsArmed() const { return m_State == STATE_ARMED; }
+	bool IsWaterCrossingActive() const { return m_WaterCrossing; }
+	int WaterCrossingStartTick() const { return m_WaterCrossingStartTick; }
 	int PlaybackTick() const { return m_PlaybackTick; }
 	int RecordTick() const { return m_CurrentRecordTick; }
 	int TotalTicks() const { return (int)m_vTicks.size(); }
@@ -131,6 +135,8 @@ private:
 	int64_t m_LastRecordTickTime = 0;
 	int64_t m_RecordTimeAccumulator = 0;
 	int m_HazardCooldownTicks = 0;
+	bool m_WaterCrossing = false;
+	int m_WaterCrossingStartTick = -1;
 
 	char m_aCurrentMap[128] = "";
 	char m_aLoadedFileName[64] = "";
@@ -152,6 +158,7 @@ private:
 	static void ConTasStatus(IConsole::IResult *pResult, void *pUserData);
 	static void ConTasToggleRecord(IConsole::IResult *pResult, void *pUserData);
 	static void ConTasTogglePlay(IConsole::IResult *pResult, void *pUserData);
+	static void ConTasToggleWaterCrossing(IConsole::IResult *pResult, void *pUserData);
 
 	static int TasFileListCallback(const char *pName, int IsDir, int DirType, void *pUser);
 };

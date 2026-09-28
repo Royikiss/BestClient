@@ -2355,8 +2355,8 @@ Fast Practice runs a completely local simulation world on your client, allowing 
 == 快速练习在客户端本地运行完全独立的模拟世界，让您不受网络延迟或干扰地练习身法及录制 TAS 轨迹。
 
 [BestClient]
-This section is reserved for upcoming auxiliary modules and practice assistants.\nMore modules will be integrated here.
-== 本区域预留给后续的辅助练习模块与身法助手。\n更多功能模块将持续整合于此。
+This section is reserved for upcoming auxiliary modules and practice assistants. More modules will be integrated here.
+== 本区域预留给后续的辅助练习模块与身法助手。更多功能模块将持续整合于此。
 
 [BestClient]
 TAS: In-memory track cleared.
@@ -2525,3 +2525,67 @@ TAS: Rewound %d ticks (to tick %d).
 [BestClient]
 Tick: %d (%.2fs) | %d%%
 == 帧: %d (%.2f秒) | %d%%
+
+[BestClient]
+Cross Water (Ignore Hazard)
+== 穿黑水模式 (临时关闭跳帧)
+
+[BestClient]
+Crossing Water... (Click to Finish)
+== 穿黑水中... (点击确认穿过)
+
+[BestClient]
+RECORDING (CROSSING)
+== 录制中 (穿黑水)
+
+[BestClient]
+REC [CROSS]
+== 录制 [穿水]
+
+[BestClient]
+Tick: %d (%.2fs) | %d%% [CROSS]
+== 帧: %d (%.2f秒) | %d%% [穿水]
+
+[BestClient]
+File: %s  |  Ticks: %d (%.2fs)  |  [CROSSING from #%d]
+== 文件: %s  |  帧数: %d (%.2f秒)  |  [穿水中: 起始帧 #%d]
+
+[BestClient]
+TAS: Water crossing mode can only be used during recording.
+== TAS: 只能在录制过程中使用穿黑水模式。
+
+[BestClient]
+TAS: Water crossing mode ACTIVATED at tick %d. Hazard auto-rewind temporarily disabled.
+== TAS: 穿黑水模式已在第 %d 帧开启。触碰黑水自动跳帧已临时禁用，穿过后请再次按下该按钮。
+
+[BestClient]
+TAS: Water crossing FAILED (still in hazard)! Rewound %d ticks before activation (to tick %d).
+== TAS: 穿黑水失败（角色仍在黑水中）！已回退至开启前 %d 帧 (至第 %d 帧)。
+
+[BestClient]
+TAS: Water crossing SUCCEEDED! Recorded segment (%d ticks, %.2fs) kept. Continuing recording...
+== TAS: 穿黑水成功！刚录制的片段 (%d 帧, %.2f秒) 已保存，继续录制...
+
+[BestClient]
+<recording>
+== <录制中>
+
+[BestClient]
+PAUSED
+== 暂停
+
+[BestClient]
+[TAS] State: %s | Ticks: %d (%.2fs) | Playback: %d | File: '%s' | Checkpoint: %s | Crossing: %s
+== [TAS] 状态: %s | 帧数: %d (%.2f秒) | 回放进度: %d | 文件: '%s' | 检查点: %s | 穿黑水: %s
+
+[BestClient]
+Active
+== 进行中
+
+[BestClient]
+Yes
+== 是
+
+[BestClient]
+No
+== 否

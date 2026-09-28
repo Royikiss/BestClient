@@ -34,16 +34,16 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		// 1. Status Block
 		// 1. Status Block
 		CUIRect StatusBox, ControlBox, SettingsBox, AutomationBox;
-		LeftColumn.HSplitTop(70.0f, &StatusBox, &LeftColumn);
-		LeftColumn.HSplitTop(8.0f, nullptr, &LeftColumn);
+		LeftColumn.HSplitTop(68.0f, &StatusBox, &LeftColumn);
+		LeftColumn.HSplitTop(6.0f, nullptr, &LeftColumn);
 
-		LeftColumn.HSplitTop(120.0f, &ControlBox, &LeftColumn);
-		LeftColumn.HSplitTop(8.0f, nullptr, &LeftColumn);
+		LeftColumn.HSplitTop(136.0f, &ControlBox, &LeftColumn);
+		LeftColumn.HSplitTop(6.0f, nullptr, &LeftColumn);
 
-		LeftColumn.HSplitTop(86.0f, &SettingsBox, &LeftColumn);
-		LeftColumn.HSplitTop(8.0f, nullptr, &LeftColumn);
+		LeftColumn.HSplitTop(84.0f, &SettingsBox, &LeftColumn);
+		LeftColumn.HSplitTop(6.0f, nullptr, &LeftColumn);
 
-		LeftColumn.HSplitTop(110.0f, &AutomationBox, &LeftColumn);
+		LeftColumn.HSplitTop(104.0f, &AutomationBox, &LeftColumn);
 
 		// Render Status
 		StatusBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 6.0f);
@@ -55,8 +55,16 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		const char *pStateStr = BcLocalize("IDLE");
 		if(Tas.IsRecordingActive())
 		{
-			BadgeCol = ColorRGBA(0.95f, 0.25f, 0.25f, 1.0f);
-			pStateStr = BcLocalize("RECORDING");
+			if(Tas.IsWaterCrossingActive())
+			{
+				BadgeCol = ColorRGBA(0.95f, 0.60f, 0.15f, 1.0f);
+				pStateStr = BcLocalize("RECORDING (CROSSING)");
+			}
+			else
+			{
+				BadgeCol = ColorRGBA(0.95f, 0.25f, 0.25f, 1.0f);
+				pStateStr = BcLocalize("RECORDING");
+			}
 		}
 		else if(Tas.IsPlaybackActive())
 		{
@@ -80,9 +88,18 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		int Cur = Tas.IsPlaybackActive() ? Tas.PlaybackTick() : (Tas.IsRecordingActive() ? Tas.RecordTick() : 0);
 		if(Tas.IsRecordingActive())
 		{
-			str_format(aInfo, sizeof(aInfo), BcLocalize("File: %s  |  Ticks: %d (%.2fs)  |  Speed: %d%%"),
-				Tas.CurrentFile()[0] ? Tas.CurrentFile() : BcLocalize("<sandbox>"),
-				Cur, (float)Cur / 50.0f, std::clamp(g_Config.m_BcTasRecordSpeed, 10, 100));
+			if(Tas.IsWaterCrossingActive())
+			{
+				str_format(aInfo, sizeof(aInfo), BcLocalize("File: %s  |  Ticks: %d (%.2fs)  |  [CROSSING from #%d]"),
+					Tas.CurrentFile()[0] ? Tas.CurrentFile() : BcLocalize("<sandbox>"),
+					Cur, (float)Cur / 50.0f, Tas.WaterCrossingStartTick());
+			}
+			else
+			{
+				str_format(aInfo, sizeof(aInfo), BcLocalize("File: %s  |  Ticks: %d (%.2fs)  |  Speed: %d%%"),
+					Tas.CurrentFile()[0] ? Tas.CurrentFile() : BcLocalize("<sandbox>"),
+					Cur, (float)Cur / 50.0f, std::clamp(g_Config.m_BcTasRecordSpeed, 10, 100));
+			}
 		}
 		else
 		{
@@ -98,12 +115,14 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		CUIRect CtrlContent;
 		ControlBox.Margin(8.0f, &CtrlContent);
 
-		CUIRect PlayRow, RecRow, CpRow;
-		CtrlContent.HSplitTop(26.0f, &PlayRow, &CtrlContent);
-		CtrlContent.HSplitTop(6.0f, nullptr, &CtrlContent);
-		CtrlContent.HSplitTop(26.0f, &RecRow, &CtrlContent);
-		CtrlContent.HSplitTop(6.0f, nullptr, &CtrlContent);
-		CtrlContent.HSplitTop(26.0f, &CpRow, &CtrlContent);
+		CUIRect PlayRow, RecRow, CpRow, CrossRow;
+		CtrlContent.HSplitTop(25.0f, &PlayRow, &CtrlContent);
+		CtrlContent.HSplitTop(5.0f, nullptr, &CtrlContent);
+		CtrlContent.HSplitTop(25.0f, &RecRow, &CtrlContent);
+		CtrlContent.HSplitTop(5.0f, nullptr, &CtrlContent);
+		CtrlContent.HSplitTop(25.0f, &CpRow, &CtrlContent);
+		CtrlContent.HSplitTop(5.0f, nullptr, &CtrlContent);
+		CtrlContent.HSplitTop(25.0f, &CrossRow, &CtrlContent);
 
 		// Play Row
 		CUIRect BtnArm, BtnPlay, BtnStop;
@@ -189,6 +208,19 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 			Tas.Rewind(g_Config.m_BcTasRewindTicks, false);
 		}
 
+		// Water Crossing Row (Temporary Hazard Auto-Rewind Bypass)
+		static CButtonContainer s_CrossWaterBtn;
+		char aCrossText[64];
+		if(Tas.IsWaterCrossingActive())
+			str_copy(aCrossText, BcLocalize("Crossing Water... (Click to Finish)"));
+		else
+			str_copy(aCrossText, BcLocalize("Cross Water (Ignore Hazard)"));
+
+		if(DoButton_Menu(&s_CrossWaterBtn, aCrossText, Tas.IsWaterCrossingActive() ? 1 : 0, &CrossRow))
+		{
+			Tas.ToggleWaterCrossing();
+		}
+
 		// Settings Box (Record Speed & Auto-Rewind)
 		SettingsBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 6.0f);
 		CUIRect SettingsContent;
@@ -246,13 +278,13 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		RightColumn.HSplitTop(26.0f, &SaveRow, &RightColumn);
 		RightColumn.HSplitTop(6.0f, nullptr, &RightColumn);
 
-		RightColumn.HSplitTop(200.0f, &ListRect, &RightColumn);
+		RightColumn.HSplitTop(186.0f, &ListRect, &RightColumn);
 		RightColumn.HSplitTop(6.0f, nullptr, &RightColumn);
 
 		RightColumn.HSplitTop(26.0f, &ListBtnRow, &RightColumn);
-		RightColumn.HSplitTop(10.0f, nullptr, &RightColumn);
+		RightColumn.HSplitTop(8.0f, nullptr, &RightColumn);
 
-		RightColumn.HSplitTop(110.0f, &KeybindBox, &RightColumn);
+		RightColumn.HSplitTop(128.0f, &KeybindBox, &RightColumn);
 
 		// Save row: Editbox + Save button
 		static CLineInputBuffered<128> s_SaveFileNameInput;
@@ -363,11 +395,12 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 			"bind o tas_arm",
 			"bind i tas_record_toggle",
 			"bind f5 tas_save_cp; bind f6 tas_load_cp; bind f7 tas_rewind",
+			"bind f8 tas_cross_water_toggle",
 		};
 		for(const char *pBind : apBinds)
 		{
 			CUIRect Line;
-			KeybindContent.HSplitTop(16.0f, &Line, &KeybindContent);
+			KeybindContent.HSplitTop(15.0f, &Line, &KeybindContent);
 			TextRender()->TextColor(0.8f, 0.8f, 0.5f, 1.0f);
 			Ui()->DoLabel(&Line, pBind, 11.0f, TEXTALIGN_ML);
 		}
@@ -426,7 +459,7 @@ void CMenus::RenderSettingsTasHelpers(CUIRect MainView)
 		Content.HSplitTop(10.0f, nullptr, &Content);
 		Content.HSplitTop(60.0f, &Desc, &Content);
 		TextRender()->TextColor(0.75f, 0.85f, 0.95f, 1.0f);
-		Ui()->DoLabel(&Desc, BcLocalize("This section is reserved for upcoming auxiliary modules and practice assistants.\nMore modules will be integrated here."), 12.0f, TEXTALIGN_ML);
+		Ui()->DoLabel(&Desc, BcLocalize("This section is reserved for upcoming auxiliary modules and practice assistants. More modules will be integrated here."), 12.0f, TEXTALIGN_ML);
 		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 	}
 }

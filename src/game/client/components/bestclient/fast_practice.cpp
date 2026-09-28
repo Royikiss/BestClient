@@ -1243,13 +1243,28 @@ bool CFastPractice::IsDeathTile(const CCharacter *pChar) const
 	const vec2 Pos = pChar->Core()->m_Pos;
 	const float Radius = pChar->GetProximityRadius() / 3.0f;
 	const int Index = Collision()->GetPureMapIndex(Pos);
-	if(Index >= 0 && (Collision()->GetTileIndex(Index) == TILE_DEATH || Collision()->GetFrontTileIndex(Index) == TILE_DEATH))
+	if(Index >= 0 && (Collision()->GetTileIndex(Index) == TILE_DEATH || Collision()->GetFrontTileIndex(Index) == TILE_DEATH || Collision()->GetSwitchType(Index) == TILE_DEATH))
 		return true;
-	for(const vec2 Offset : {vec2(Radius, 0), vec2(-Radius, 0), vec2(0, Radius), vec2(0, -Radius)})
+	const vec2 aCorners[] = {
+		vec2(Radius, -Radius),
+		vec2(Radius, Radius),
+		vec2(-Radius, -Radius),
+		vec2(-Radius, Radius),
+	};
+	for(const vec2 &Corner : aCorners)
 	{
-		const int Corner = Collision()->GetPureMapIndex(Pos + Offset);
-		if(Corner >= 0 && (Collision()->GetTileIndex(Corner) == TILE_DEATH || Collision()->GetFrontTileIndex(Corner) == TILE_DEATH))
+		const float Px = Pos.x + Corner.x;
+		const float Py = Pos.y + Corner.y;
+		if(Collision()->GetCollisionAt(Px, Py) == TILE_DEATH ||
+		   Collision()->GetFrontCollisionAt(Px, Py) == TILE_DEATH)
+		{
 			return true;
+		}
+		const int CornerIndex = Collision()->GetPureMapIndex(vec2(Px, Py));
+		if(CornerIndex >= 0 && Collision()->GetSwitchType(CornerIndex) == TILE_DEATH)
+		{
+			return true;
+		}
 	}
 	return false;
 }

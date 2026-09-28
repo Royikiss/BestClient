@@ -2355,8 +2355,8 @@ Fast Practice runs a completely local simulation world on your client, allowing 
 == Fast Practice запускает полностью локальную симуляцию на вашем клиенте, позволяя тренироваться и записывать TAS офлайн без лагов.
 
 [BestClient]
-This section is reserved for upcoming auxiliary modules and practice assistants.\nMore modules will be integrated here.
-== Этот раздел зарезервирован для будущих вспомогательных модулей.\nОни будут добавлены позже.
+This section is reserved for upcoming auxiliary modules and practice assistants. More modules will be integrated here.
+== Этот раздел зарезервирован для будущих вспомогательных модулей. Они будут добавлены позже.
 
 [BestClient]
 TAS: In-memory track cleared.
@@ -2525,3 +2525,67 @@ TAS: Rewound %d ticks (to tick %d).
 [BestClient]
 Tick: %d (%.2fs) | %d%%
 == Тик: %d (%.2fs) | %d%%
+
+[BestClient]
+Cross Water (Ignore Hazard)
+== Проход воды (без отката)
+
+[BestClient]
+Crossing Water... (Click to Finish)
+== Проход воды... (нажмите для завершения)
+
+[BestClient]
+RECORDING (CROSSING)
+== ЗАПИСЬ (ПРОХОД ВОДЫ)
+
+[BestClient]
+REC [CROSS]
+== ЗАПИСЬ [ВОДА]
+
+[BestClient]
+Tick: %d (%.2fs) | %d%% [CROSS]
+== Тик: %d (%.2fs) | %d%% [ВОДА]
+
+[BestClient]
+File: %s  |  Ticks: %d (%.2fs)  |  [CROSSING from #%d]
+== Файл: %s  |  Тики: %d (%.2fс)  |  [ПРОХОД ВОДЫ с #%d]
+
+[BestClient]
+TAS: Water crossing mode can only be used during recording.
+== TAS: Режим прохода воды доступен только во время записи.
+
+[BestClient]
+TAS: Water crossing mode ACTIVATED at tick %d. Hazard auto-rewind temporarily disabled.
+== TAS: Режим прохода воды активирован на тике %d. Авто-откат временно отключен.
+
+[BestClient]
+TAS: Water crossing FAILED (still in hazard)! Rewound %d ticks before activation (to tick %d).
+== TAS: Проход воды провален (персонаж в опасной зоне)! Выполнен откат на %d тиков до активации (к тику %d).
+
+[BestClient]
+TAS: Water crossing SUCCEEDED! Recorded segment (%d ticks, %.2fs) kept. Continuing recording...
+== TAS: Проход воды успешен! Записанный сегмент (%d тиков, %.2fс) сохранен. Запись продолжается...
+
+[BestClient]
+<recording>
+== <запись>
+
+[BestClient]
+PAUSED
+== Пауза
+
+[BestClient]
+[TAS] State: %s | Ticks: %d (%.2fs) | Playback: %d | File: '%s' | Checkpoint: %s | Crossing: %s
+== [TAS] Состояние: %s | Тики: %d (%.2fс) | Воспроизведение: %d | Файл: '%s' | Чекпоинт: %s | Проход воды: %s
+
+[BestClient]
+Active
+== Активно
+
+[BestClient]
+Yes
+== Да
+
+[BestClient]
+No
+== Нет

@@ -3495,6 +3495,11 @@ if(CLIENT)
     )
   endif()
   add_dependencies(game-client generate_content_types)
+  add_custom_target(sync-data
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${PROJECT_SOURCE_DIR}/data ${CMAKE_BINARY_DIR}/data
+    COMMENT "Syncing data directory"
+  )
+  add_dependencies(game-client sync-data)
   if(VULKAN)
     add_dependencies(game-client build_vulkan_shaders)
   endif()

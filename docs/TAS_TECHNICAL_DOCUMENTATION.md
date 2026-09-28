@@ -1,9 +1,9 @@
 # BestClient TAS (Tool-Assisted Speedrun) 技术架构与开发维护全景指南
 
 > **面向后续开发人员与 AI Agent 的完整技术规范**  
-> **文档版本**: 1.0.0  
+> **文档版本**: 1.1.0  
 > **适用代码分支**: `feature/tas`  
-> **最后更新**: 2026-09-28  
+> **最后更新**: 2026-09-28 (v1.1.0: 穿黑水模式、物理对齐4角碰撞、HUD模式区分、本地化同步构建系统)  
 
 ---
 
@@ -197,7 +197,14 @@ int CTas::ConsumeSlowMoTicks()
 
 ### 3.4 危险障碍检测与自动回退 (Hazard Detection & Auto-Rewind)
 #### 核心算法 (`CTas::IsHazard`)
-为了精准检测角色是否碰到致命或冻结方块，采用 **“9 点多层探测法”**（探测中心点与外围 8 个径向边界点）：
+为了确保 TAS 录制过程中的危险判定与 DDNet 官方物理引擎（`CCharacter::HandleTiles` 与 `CCharacter::HandleSkippableTiles`）**完全一致**（避免在穿越一格宽的狭窄通道时因多余的外延探测点而误触发回退），采用与官方一致的探测规则：
+
+1. **冻结方块检测（中心点探测）**：
+   官方 DDNet 中冻结层（`TILE_FREEZE`, `TILE_DFREEZE`, `TILE_LFREEZE`）仅探测角色中心坐标 `m_Pos` 对应的 Tile。
+2. **致命方块检测（4 角落采样点）**：
+   官方 DDNet 致命方块（`TILE_DEATH` 及死亡开关）仅探测 Tee 的 4 个角落采样点：
+   $$(P_x \pm r, P_y \pm r), \quad \text{其中 } r = \frac{\text{ProximityRadius}}{3.0} \approx 9.33\text{px}$$
+   在 1 格宽（32px）的直行通道中，4 角横向跨度为 $2 \times 9.33 = 18.67\text{px}$，留有 $32 - 18.67 = 13.33\text{px}$ 的充裕通道余量。
 
 ```cpp
 bool CTas::IsHazard(const CCharacter *pChar) const
@@ -207,35 +214,51 @@ bool CTas::IsHazard(const CCharacter *pChar) const
 
     // 1. 角色自身冻结状态检测
     if(pChar->m_FreezeTime > 0 || pChar->Core()->m_FreezeEnd != 0 ||
-       pChar->Core()->m_DeepFrozen || pChar->Core()->m_LiveFrozen || pChar->Core()->m_IsInFreeze)
+       pChar->Core()->m_DeepFrozen || pChar->Core()->m_LiveFrozen)
         return true;
 
-    // 2. 地图碰撞探测 (中心 + 8个放射性边缘探测点)
     const vec2 Pos = pChar->Core()->m_Pos;
-    const float Radius = pChar->GetProximityRadius() / 3.0f;
-    const vec2 aOffsets[] = {
-        vec2(0.0f, 0.0f),
-        vec2(Radius, 0.0f),  vec2(-Radius, 0.0f),
-        vec2(0.0f, Radius),  vec2(0.0f, -Radius),
-        vec2(Radius, Radius), vec2(-Radius, -Radius),
-        vec2(Radius, -Radius), vec2(-Radius, Radius),
-    };
 
-    for(const vec2 &Offset : aOffsets)
+    // 2. 冻结方块探测（与官方 DDNet HandleTiles 一致，探测角色中心点）
+    const int CenterIndex = Collision()->GetPureMapIndex(Pos);
+    if(CenterIndex >= 0)
     {
-        const int Index = Collision()->GetPureMapIndex(Pos + Offset);
-        if(Index < 0) continue;
-
-        const int Tile = Collision()->GetTileIndex(Index);
-        const int Front = Collision()->GetFrontTileIndex(Index);
-        const int Switch = Collision()->GetSwitchType(Index);
-
+        const int Tile = Collision()->GetTileIndex(CenterIndex);
+        const int Front = Collision()->GetFrontTileIndex(CenterIndex);
+        const int Switch = Collision()->GetSwitchType(CenterIndex);
         for(int T : {Tile, Front, Switch})
         {
-            if(T == TILE_DEATH || T == TILE_FREEZE || T == TILE_DFREEZE || T == TILE_LFREEZE)
+            if(T == TILE_FREEZE || T == TILE_DFREEZE || T == TILE_LFREEZE)
                 return true;
         }
     }
+
+    // 3. 致命方块探测（与官方 DDNet HandleSkippableTiles 一致，严格探测 4 角落采样点）
+    const float Radius = pChar->GetProximityRadius() / 3.0f;
+    const vec2 aCorners[] = {
+        vec2(Radius, -Radius),
+        vec2(Radius, Radius),
+        vec2(-Radius, -Radius),
+        vec2(-Radius, Radius),
+    };
+
+    for(const vec2 &Corner : aCorners)
+    {
+        const float Px = Pos.x + Corner.x;
+        const float Py = Pos.y + Corner.y;
+        if(Collision()->GetCollisionAt(Px, Py) == TILE_DEATH ||
+           Collision()->GetFrontCollisionAt(Px, Py) == TILE_DEATH)
+        {
+            return true;
+        }
+
+        const int Index = Collision()->GetPureMapIndex(vec2(Px, Py));
+        if(Index >= 0 && Collision()->GetSwitchType(Index) == TILE_DEATH)
+        {
+            return true;
+        }
+    }
+
     return false;
 }
 ```
@@ -248,7 +271,54 @@ bool CTas::IsHazard(const CCharacter *pChar) const
 
 ---
 
-### 3.5 数据结构规格定义
+### 3.5 穿黑水模式与安全穿过校验机制 (Water Crossing Mode & Safety Verification)
+#### 核心需求与背景
+在部分 DDNet 地图或关卡中，设计允许或强制要求 Tee 穿过黑水（`TILE_DEATH`）或危险障碍区（例如利用钩索瞬间拉力、特殊传送或惯性抛射穿行）。在此类关卡中，默认的“触碰危险自动回退”会导致玩家刚接触黑水边缘就被强制倒退，无法完成录制。
+
+因此，TAS 模块提供了**穿黑水模式 (Water Crossing Mode)**，实现临时关闭跳帧并在穿过结束时自动安全校验：
+
+#### 工作流程规范与状态机行为
+1. **模式开启（第一次按下按键 / 按钮）**：
+   * 调用 `CTas::ToggleWaterCrossing()`（或控制台命令 `tas_cross_water_toggle`）。
+   * 系统置位 `m_WaterCrossing = true`，并记录开启该模式瞬间的序列帧序号：
+     $$T_{\text{start}} = \text{m\_vTicks.size()}$$
+   * 录制状态显示变为 `REC [CROSS]`（HUD 高亮橙色指示器）。
+   * 在沙盒物理步进推进时，`CheckHazardAndRewind()` 检测到 `m_WaterCrossing == true`，**直接跳过危险回退判定**，允许角色在黑水中移动并持续记录离散帧数据至 `m_vTicks`。
+
+2. **穿过校验与关闭（穿过黑水后第二次按下按键 / 按钮）**：
+   * 玩家在离开黑水着陆后，再次按下该按钮。
+   * 系统立即调用 `CTas::IsHazard(pLocalChar)` 对玩家（以及分身）当前时刻的物理状态进行严格的安全探测：
+     * **分支 A：穿过失败（`InHazard == true`）**：
+       * 玩家当前仍处于黑水或冻结水中，说明尝试穿行黑水失败。
+       * 系统执行安全回滚，回退至**第一次开启穿水模式时之前的几帧**：
+         $$T_{\text{target}} = \max(0, T_{\text{start}} - \text{g\_Config.m\_BcTasRewindTicks})$$
+       * 此处的跳帧数与遇水回退帧数统一采用 `g_Config.m_BcTasRewindTicks`（默认 30 帧），保证回退到开启穿水前充分的安全起跳位置。
+       * 裁剪 `m_vTicks` 并通过 `RestorePhysicalState()` 还原该时刻的全部物理姿态与速度，播放重生音效。
+       * 自动退出穿水模式（`m_WaterCrossing = false`）。
+     * **分支 B：穿过成功（`InHazard == false`）**：
+       * 玩家已成功脱离黑水且未冻结。
+       * 穿水期间录制的全部物理帧片段被**完整保留在 `m_vTicks` 中**。
+       * 退出穿水模式（`m_WaterCrossing = false`），恢复常规的危险自动回退保护，继续正常录制后续身法。
+
+---
+
+### 3.6 HUD 状态显示与模式区分 (HUD Mode Indication & Feedback)
+由于 TAS 录制基于 `CFastPractice` 本地沙盒架构，在旧版本中启动录制会直接显示原版练习模式的提示信息（`practice mode`），导致用户认知混淆。针对该问题，HUD 显示系统进行了专门的模式感知与适配：
+
+1. **顶部状态文本区分（`src/game/client/components/hud.cpp`）**：
+   * **TAS 录制激活时**：
+     * 主标题文本从 `practice mode` 切换为 **`tas mode`**。
+     * 副标题动态感知：常规录制时显示 `(TAS recording in progress)`；开启穿黑水模式时高亮显示 `(TAS water crossing mode active)`。
+   * **普通练习模式激活时**：
+     * 保持原有 `practice mode` 及 `(you can use practice commands /tc /invincible)` 提示。
+2. **右上角独立 TAS HUD（`CTas::RenderTasHud`）**：
+   * 支持通过 `bc_tas_show_hud` 开关控制。
+   * 录制状态标识：普通录制显示红底 `REC`，穿黑水模式显示橙色高亮 `REC [CROSS]`。
+   * 实时显示当前序列帧数（Tick）、对应游戏内秒数、录制减速百分比（Speed）、以及当前加载文件名或 `<本地沙盒>` 标记。
+
+---
+
+### 3.7 数据结构规格定义
 
 #### `STasTick`（单帧录制数据）
 ```cpp
@@ -360,6 +430,7 @@ T 2 0 120 -50 0 1 1 0 0 0 0 0 0 0 0 0 0 0 361.00 812.10
 | `tas_load` | `s[name]` | 从 `tas/<name>.tas` 加载轨迹到内存 |
 | `tas_clear` | - | 清空内存中的轨迹与检查点 |
 | `tas_status` | - | 控制台打印当前状态详情 |
+| `tas_cross_water_toggle` | - | **切换穿黑水模式**（临时关闭跳帧，再次按下触发安全校验） |
 
 ---
 
@@ -394,8 +465,29 @@ with open("data/BestClient/languages/simplified_chinese.txt") as f:
     text = f.read()
 assert "Save CP" in text
 assert "Hazard rewind ticks" in text
+assert "Cross Water (Ignore Hazard)" in text
+assert "Crossing Water... (Click to Finish)" in text
 '
 ```
+
+### 6.3 多语言本地化系统与构建同步规范
+
+#### 1. CMake 自动同步目标 (`sync-data`)
+DDNet 客户端运行时从工作目录下的 `build/data`（或可执行文件相对路径）读取语言包文件。在原版 CMake 体系中，`data/` 目录仅在执行 `cmake ..` 配置阶段进行一次浅拷贝，后续直接修改源码目录 `data/` 下的文件不会触发重新拷贝，导致游戏内依然加载旧翻译。
+为此，BestClient 在 `CMakeLists.txt` 中添加了自定义目标：
+```cmake
+add_custom_target(sync-data
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${PROJECT_SOURCE_DIR}/data ${CMAKE_BINARY_DIR}/data
+  COMMENT "Syncing data directory"
+)
+add_dependencies(game-client sync-data)
+```
+任何执行 `ninja DDNet` 的构建操作都会自动将 `data/` 中的最新文本与资源增量同步至 `build/data/`，保证客户端加载的始终为最新词条。
+
+#### 2. 本地化解析器（`CLocalizationDatabase::Load`）语法陷阱
+DDNet 原版解析器规定：**凡是以 `[` 开头且以 `]` 结尾的行，一律视为翻译上下文头（`Context`）**，例如 `[BestClient]`。
+* **严禁**将原始待翻译词条命名为 `[recording]`、`[none]` 等中括号格式，否则解析器会将其错误识别为上下文标识符，导致后续所有待翻译条目的上下文全部紊乱并丢失。
+* 如需使用括号标识，应使用尖括号（如 `<recording>`、`<none>`、`<sandbox>`）或确保首尾不直接由中括号包围。
 
 ---
 *文档编制完成，代码与功能已全面上线并经本地沙盒严苛验证。*

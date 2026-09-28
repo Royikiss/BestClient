@@ -63,6 +63,8 @@ void CTas::OnConsoleInit()
 	Console()->Register("tas_rewind", "?i[ticks]", CFGFLAG_CLIENT, ConTasRewind, this, "Rewind TAS recording and character physics by N ticks");
 	Console()->Register("tas_clear", "", CFGFLAG_CLIENT, ConTasClear, this, "Clear in-memory TAS track");
 	Console()->Register("tas_status", "", CFGFLAG_CLIENT, ConTasStatus, this, "Print current TAS status");
+	Console()->Register("tas_cross_water_toggle", "", CFGFLAG_CLIENT, ConTasToggleWaterCrossing, this, "Toggle water crossing mode (temporary hazard auto-rewind bypass)");
+	Console()->Register("tas_hazard_cross_toggle", "", CFGFLAG_CLIENT, ConTasToggleWaterCrossing, this, "Toggle water crossing mode (alias)");
 
 	RefreshFileList();
 }
@@ -128,6 +130,8 @@ void CTas::StartRecord(bool ResetTrack)
 	m_LastRecordTickTime = time_get();
 	m_RecordTimeAccumulator = 0;
 	m_HazardCooldownTicks = 0;
+	m_WaterCrossing = false;
+	m_WaterCrossingStartTick = -1;
 
 	// Snapshot initial state
 	CFastPractice &Fp = GameClient()->m_FastPractice;
@@ -167,6 +171,8 @@ void CTas::StopRecord()
 	{
 		m_State = STATE_IDLE;
 		m_RecordTimeAccumulator = 0;
+		m_WaterCrossing = false;
+		m_WaterCrossingStartTick = -1;
 		char aBuf[128];
 		str_format(aBuf, sizeof(aBuf), BcLocalize("TAS recording stopped. Recorded %d ticks (%.2f seconds)."), (int)m_vTicks.size(), (float)m_vTicks.size() / 50.0f);
 		GameClient()->Echo(aBuf);
@@ -380,6 +386,9 @@ void CTas::LoadCheckpoint()
 		return;
 	}
 
+	m_WaterCrossing = false;
+	m_WaterCrossingStartTick = -1;
+
 	int TargetTick = std::clamp(m_Checkpoint.m_Tick, 0, (int)m_vTicks.size());
 	m_vTicks.resize(TargetTick);
 	m_CurrentRecordTick = TargetTick;
@@ -393,14 +402,14 @@ void CTas::LoadCheckpoint()
 	GameClient()->Echo(aBuf);
 }
 
-void CTas::Rewind(int NumTicks, bool IsAutoHazard)
+void CTas::RollbackToTick(int TargetTick)
 {
 	if(m_State != STATE_RECORDING)
 		return;
 
 	if(m_vTicks.empty())
 	{
-		if(IsAutoHazard && m_InitialState.m_Valid)
+		if(m_InitialState.m_Valid)
 		{
 			RestorePhysicalState(m_InitialState.m_MainCore, m_InitialState.m_MainFreezeTime,
 			                     m_InitialState.m_DummyCore, m_InitialState.m_DummyFreezeTime,
@@ -409,9 +418,7 @@ void CTas::Rewind(int NumTicks, bool IsAutoHazard)
 		return;
 	}
 
-	int CurTicks = (int)m_vTicks.size();
-	int TargetTick = std::max(0, CurTicks - NumTicks);
-
+	TargetTick = std::clamp(TargetTick, 0, (int)m_vTicks.size());
 	if(TargetTick == 0)
 	{
 		m_vTicks.clear();
@@ -436,6 +443,21 @@ void CTas::Rewind(int NumTicks, bool IsAutoHazard)
 	if(g_Config.m_SndGame && !GameClient()->m_SuppressEvents)
 		GameClient()->m_Sounds.Play(CSounds::CHN_GLOBAL, SOUND_PLAYER_SPAWN, 1.0f);
 
+	m_HazardCooldownTicks = 5;
+}
+
+void CTas::Rewind(int NumTicks, bool IsAutoHazard)
+{
+	if(m_State != STATE_RECORDING)
+		return;
+
+	m_WaterCrossing = false;
+	m_WaterCrossingStartTick = -1;
+
+	int CurTicks = (int)m_vTicks.size();
+	int TargetTick = std::max(0, CurTicks - NumTicks);
+	RollbackToTick(TargetTick);
+
 	char aBuf[128];
 	if(IsAutoHazard)
 		str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Hazard touched! Auto-rewound %d ticks (to tick %d)."), NumTicks, TargetTick);
@@ -444,12 +466,86 @@ void CTas::Rewind(int NumTicks, bool IsAutoHazard)
 	GameClient()->Echo(aBuf);
 }
 
+void CTas::ToggleWaterCrossing()
+{
+	if(m_State != STATE_RECORDING)
+	{
+		GameClient()->Echo(BcLocalize("TAS: Water crossing mode can only be used during recording."));
+		return;
+	}
+
+	if(!m_WaterCrossing)
+	{
+		// Activate water crossing mode: ignore hazard auto-rewind
+		m_WaterCrossing = true;
+		m_WaterCrossingStartTick = (int)m_vTicks.size();
+		m_HazardCooldownTicks = 0;
+
+		char aBuf[160];
+		str_format(aBuf, sizeof(aBuf),
+			BcLocalize("TAS: Water crossing mode ACTIVATED at tick %d. Hazard auto-rewind temporarily disabled."),
+			m_WaterCrossingStartTick);
+		GameClient()->Echo(aBuf);
+	}
+	else
+	{
+		// Deactivate water crossing mode: verify outcome
+		CFastPractice &Fp = GameClient()->m_FastPractice;
+		int LocalClientId = Fp.ControlledPracticeId();
+		int DummyClientId = Fp.CurrentPracticeDummyId();
+		CCharacter *pLocalChar = Fp.Active() ? Fp.PracticeWorld().GetCharacterById(LocalClientId) : nullptr;
+
+		bool LocalHazard = pLocalChar ? IsHazard(pLocalChar) : false;
+		bool DummyHazard = false;
+		if(DummyClientId >= 0)
+		{
+			if(CCharacter *pDummyChar = Fp.PracticeWorld().GetCharacterById(DummyClientId))
+				DummyHazard = IsHazard(pDummyChar);
+		}
+
+		const bool InHazard = LocalHazard || DummyHazard;
+
+		if(InHazard)
+		{
+			// Crossing FAILED: character is still in black water / hazard
+			int RewindTicks = std::clamp(g_Config.m_BcTasRewindTicks, 5, 200);
+			int StartTick = m_WaterCrossingStartTick >= 0 ? m_WaterCrossingStartTick : (int)m_vTicks.size();
+			int TargetTick = std::max(0, StartTick - RewindTicks);
+
+			RollbackToTick(TargetTick);
+			m_WaterCrossing = false;
+			m_WaterCrossingStartTick = -1;
+
+			char aBuf[160];
+			str_format(aBuf, sizeof(aBuf),
+				BcLocalize("TAS: Water crossing FAILED (still in hazard)! Rewound %d ticks before activation (to tick %d)."),
+				RewindTicks, TargetTick);
+			GameClient()->Echo(aBuf);
+		}
+		else
+		{
+			// Crossing SUCCEEDED: character safely exited hazard
+			m_WaterCrossing = false;
+			int SegmentTicks = (int)m_vTicks.size() - (m_WaterCrossingStartTick >= 0 ? m_WaterCrossingStartTick : 0);
+			m_WaterCrossingStartTick = -1;
+
+			char aBuf[160];
+			str_format(aBuf, sizeof(aBuf),
+				BcLocalize("TAS: Water crossing SUCCEEDED! Recorded segment (%d ticks, %.2fs) kept. Continuing recording..."),
+				SegmentTicks, (float)SegmentTicks / 50.0f);
+			GameClient()->Echo(aBuf);
+		}
+	}
+}
+
 void CTas::Clear()
 {
 	StopPlayback();
 	StopRecord();
 	m_vTicks.clear();
 	m_Checkpoint.m_Valid = false;
+	m_WaterCrossing = false;
+	m_WaterCrossingStartTick = -1;
 	m_aLoadedFileName[0] = '\0';
 	GameClient()->Echo(BcLocalize("TAS: In-memory track cleared."));
 }
@@ -811,9 +907,18 @@ void CTas::RenderHud()
 
 	if(m_State == STATE_RECORDING)
 	{
-		BadgeColor = ColorRGBA(0.95f, 0.25f, 0.25f, 1.0f);
-		BorderColor = ColorRGBA(0.85f, 0.25f, 0.25f, 0.95f);
-		pStateName = BcLocalize("REC");
+		if(m_WaterCrossing)
+		{
+			BadgeColor = ColorRGBA(0.95f, 0.60f, 0.15f, 1.0f);
+			BorderColor = ColorRGBA(0.95f, 0.60f, 0.15f, 0.95f);
+			pStateName = BcLocalize("REC [CROSS]");
+		}
+		else
+		{
+			BadgeColor = ColorRGBA(0.95f, 0.25f, 0.25f, 1.0f);
+			BorderColor = ColorRGBA(0.85f, 0.25f, 0.25f, 0.95f);
+			pStateName = BcLocalize("REC");
+		}
 	}
 	else if(m_State == STATE_PLAYING)
 	{
@@ -836,7 +941,8 @@ void CTas::RenderHud()
 
 	// State Badge
 	CUIRect BadgeRect;
-	Header.VSplitLeft(55.0f, &BadgeRect, &Header);
+	const float BadgeWidth = (m_State == STATE_RECORDING && m_WaterCrossing) ? 75.0f : 55.0f;
+	Header.VSplitLeft(BadgeWidth, &BadgeRect, &Header);
 	BadgeRect.Draw(BadgeColor, IGraphics::CORNER_ALL, 4.0f);
 	TextRender()->TextColor(0.05f, 0.05f, 0.05f, 1.0f);
 	Ui()->DoLabel(&BadgeRect, pStateName, 11.0f, TEXTALIGN_MC);
@@ -844,7 +950,7 @@ void CTas::RenderHud()
 
 	// File Name
 	Header.VSplitLeft(6.0f, nullptr, &Header);
-	const char *pDisplayFile = m_aLoadedFileName[0] ? m_aLoadedFileName : (m_State == STATE_RECORDING ? BcLocalize("[recording]") : BcLocalize("[none]"));
+	const char *pDisplayFile = m_aLoadedFileName[0] ? m_aLoadedFileName : (m_State == STATE_RECORDING ? BcLocalize("<recording>") : BcLocalize("<none>"));
 	Ui()->DoLabel(&Header, pDisplayFile, 11.0f, TEXTALIGN_ML);
 
 	// Progress & Ticks
@@ -855,7 +961,12 @@ void CTas::RenderHud()
 
 	char aTickBuf[64];
 	if(m_State == STATE_RECORDING)
-		str_format(aTickBuf, sizeof(aTickBuf), BcLocalize("Tick: %d (%.2fs) | %d%%"), Cur, (float)Cur / 50.0f, std::clamp(g_Config.m_BcTasRecordSpeed, 10, 100));
+	{
+		if(m_WaterCrossing)
+			str_format(aTickBuf, sizeof(aTickBuf), BcLocalize("Tick: %d (%.2fs) | %d%% [CROSS]"), Cur, (float)Cur / 50.0f, std::clamp(g_Config.m_BcTasRecordSpeed, 10, 100));
+		else
+			str_format(aTickBuf, sizeof(aTickBuf), BcLocalize("Tick: %d (%.2fs) | %d%%"), Cur, (float)Cur / 50.0f, std::clamp(g_Config.m_BcTasRecordSpeed, 10, 100));
+	}
 	else
 		str_format(aTickBuf, sizeof(aTickBuf), BcLocalize("Tick: %d / %d (%.2fs)"), Cur, Total, (float)Cur / 50.0f);
 	Ui()->DoLabel(&Content, aTickBuf, 10.0f, TEXTALIGN_ML);
@@ -949,17 +1060,30 @@ void CTas::ConTasStatus(IConsole::IResult *pResult, void *pUserData)
 {
 	(void)pResult;
 	CTas *pThis = static_cast<CTas *>(pUserData);
-	const char *apStateStr[] = {"IDLE", "RECORDING", "ARMED", "PLAYING", "PAUSED"};
-	char aBuf[256];
+	const char *apStateStr[] = {
+		BcLocalize("IDLE"),
+		BcLocalize("RECORDING"),
+		BcLocalize("ARMED"),
+		BcLocalize("PLAYING"),
+		BcLocalize("PAUSED")
+	};
+	char aBuf[320];
 	str_format(aBuf, sizeof(aBuf),
-		"[TAS] State: %s | Ticks: %d (%.2fs) | Playback: %d | File: '%s' | Checkpoint: %s",
+		BcLocalize("[TAS] State: %s | Ticks: %d (%.2fs) | Playback: %d | File: '%s' | Checkpoint: %s | Crossing: %s"),
 		apStateStr[pThis->m_State],
 		(int)pThis->m_vTicks.size(),
 		(float)pThis->m_vTicks.size() / 50.0f,
 		pThis->m_PlaybackTick,
-		pThis->m_aLoadedFileName[0] ? pThis->m_aLoadedFileName : "<none>",
-		pThis->m_Checkpoint.m_Valid ? "Yes" : "No");
+		pThis->m_aLoadedFileName[0] ? pThis->m_aLoadedFileName : BcLocalize("<none>"),
+		pThis->m_Checkpoint.m_Valid ? BcLocalize("Yes") : BcLocalize("No"),
+		pThis->m_WaterCrossing ? BcLocalize("Active") : BcLocalize("No"));
 	pThis->GameClient()->Echo(aBuf);
+}
+
+void CTas::ConTasToggleWaterCrossing(IConsole::IResult *pResult, void *pUserData)
+{
+	(void)pResult;
+	static_cast<CTas *>(pUserData)->ToggleWaterCrossing();
 }
 
 void CTas::ConTasRewind(IConsole::IResult *pResult, void *pUserData)
@@ -1005,40 +1129,50 @@ bool CTas::IsHazard(const CCharacter *pChar) const
 
 	// 1. Freeze states
 	if(pChar->m_FreezeTime > 0 || pChar->Core()->m_FreezeEnd != 0 ||
-	   pChar->Core()->m_DeepFrozen || pChar->Core()->m_LiveFrozen || pChar->Core()->m_IsInFreeze)
+	   pChar->Core()->m_DeepFrozen || pChar->Core()->m_LiveFrozen)
 	{
 		return true;
 	}
 
-	// 2. Tile checks at center and corners
 	const vec2 Pos = pChar->Core()->m_Pos;
+
+	// 2. Freeze tiles at center position (exact match with official DDNet CCharacter::HandleTiles)
+	const int CenterIndex = Collision()->GetPureMapIndex(Pos);
+	if(CenterIndex >= 0)
+	{
+		const int Tile = Collision()->GetTileIndex(CenterIndex);
+		const int Front = Collision()->GetFrontTileIndex(CenterIndex);
+		const int Switch = Collision()->GetSwitchType(CenterIndex);
+		for(int T : {Tile, Front, Switch})
+		{
+			if(T == TILE_FREEZE || T == TILE_DFREEZE || T == TILE_LFREEZE)
+				return true;
+		}
+	}
+
+	// 3. Death tiles at 4 corners (exact match with official DDNet CCharacter::HandleSkippableTiles)
 	const float Radius = pChar->GetProximityRadius() / 3.0f;
-	const vec2 aOffsets[] = {
-		vec2(0.0f, 0.0f),
-		vec2(Radius, 0.0f),
-		vec2(-Radius, 0.0f),
-		vec2(0.0f, Radius),
-		vec2(0.0f, -Radius),
+	const vec2 aCorners[] = {
+		vec2(Radius, -Radius),
 		vec2(Radius, Radius),
 		vec2(-Radius, -Radius),
-		vec2(Radius, -Radius),
 		vec2(-Radius, Radius),
 	};
 
-	for(const vec2 &Offset : aOffsets)
+	for(const vec2 &Corner : aCorners)
 	{
-		const int Index = Collision()->GetPureMapIndex(Pos + Offset);
-		if(Index < 0)
-			continue;
-
-		const int Tile = Collision()->GetTileIndex(Index);
-		const int Front = Collision()->GetFrontTileIndex(Index);
-		const int Switch = Collision()->GetSwitchType(Index);
-
-		for(int T : {Tile, Front, Switch})
+		const float Px = Pos.x + Corner.x;
+		const float Py = Pos.y + Corner.y;
+		if(Collision()->GetCollisionAt(Px, Py) == TILE_DEATH ||
+		   Collision()->GetFrontCollisionAt(Px, Py) == TILE_DEATH)
 		{
-			if(T == TILE_DEATH || T == TILE_FREEZE || T == TILE_DFREEZE || T == TILE_LFREEZE)
-				return true;
+			return true;
+		}
+
+		const int Index = Collision()->GetPureMapIndex(vec2(Px, Py));
+		if(Index >= 0 && Collision()->GetSwitchType(Index) == TILE_DEATH)
+		{
+			return true;
 		}
 	}
 
@@ -1048,6 +1182,9 @@ bool CTas::IsHazard(const CCharacter *pChar) const
 bool CTas::CheckHazardAndRewind(int LocalClientId, int DummyClientId)
 {
 	if(m_State != STATE_RECORDING)
+		return false;
+
+	if(m_WaterCrossing)
 		return false;
 
 	if(m_HazardCooldownTicks > 0)
