@@ -150,6 +150,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 			Localize("Assets"),
 			TCLocalize("TClient"), // TClient
 			Localize("BestClient"), // bestclient
+			"TAS&", // TAS&
 			Localize("Profiles"), // TClient
 			Localize("Configs"), // TClient
 			Localize("Credits")};

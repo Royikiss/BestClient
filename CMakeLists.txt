@@ -3033,6 +3033,9 @@ if(CLIENT)
     components/bestclient/edgehelper.h
     components/bestclient/fast_practice.cpp
     components/bestclient/fast_practice.h
+    components/bestclient/tas.cpp
+    components/bestclient/tas.h
+    components/bestclient/menus_tas.cpp
     components/bestclient/finish_prediction.cpp
     components/bestclient/finish_prediction.h
     components/bestclient/keystrokes.cpp

@@ -594,3 +594,13 @@ MACRO_CONFIG_COL(BcWeatherFireflyColor, bc_weather_firefly_color, 3791782, CFGFL
 MACRO_CONFIG_INT(BcAmbientDust, bc_ambient_dust, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Drift motes of dust through the world for atmosphere")
 MACRO_CONFIG_COL(BcAmbientDustColor, bc_ambient_dust_color, 1981660, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Color of the ambient dust motes")
 MACRO_CONFIG_INT(BcAmbientDustAmount, bc_ambient_dust_amount, 100, 25, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Amount of ambient dust motes in percent")
+
+// TAS&
+MACRO_CONFIG_INT(BcTasEnabled, bc_tas_enabled, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable TAS system")
+MACRO_CONFIG_INT(BcTasAutoStart, bc_tas_auto_start, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically start TAS playback when crossing race start line")
+MACRO_CONFIG_INT(BcTasPlaybackDummy, bc_tas_playback_dummy, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Play dummy inputs if available in TAS file")
+MACRO_CONFIG_INT(BcTasAutoStopOnInput, bc_tas_auto_stop_on_input, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Stop TAS playback on manual mouse/keyboard input")
+MACRO_CONFIG_INT(BcTasShowHud, bc_tas_show_hud, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show TAS status overlay HUD on screen")
+MACRO_CONFIG_INT(BcTasShowTrajectory, bc_tas_show_trajectory, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show TAS predicted trajectory path")
+MACRO_CONFIG_STR(BcTasCurrentFile, bc_tas_current_file, 64, "default", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Selected TAS run filename")
+MACRO_CONFIG_INT(BcTasTab, bc_tas_tab, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Selected subtab in TAS& menu (0=TAS, 1=Helpers)")

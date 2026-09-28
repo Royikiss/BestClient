@@ -156,6 +156,7 @@ void CGameClient::OnConsoleInit()
 					      &m_MovingTilesBackground, // TClient
 					      &m_CloudInput, // bestclient
 					      &m_FastPractice, // bestclient
+					      &m_Tas, // bestclient
 					      &m_BcAutoMargin, // bestclient
 					      &m_MapLayersForeground,
 					      &m_MovingTilesForeground, // TClient
@@ -624,9 +625,21 @@ void CGameClient::OnDummySwap()
 
 int CGameClient::OnSnapInput(int *pData, bool Dummy, bool Force)
 {
+	// bestclient: TAS playback override
+	if(m_Tas.IsPlaybackActive())
+	{
+		int TasSize = m_Tas.OnSnapInput(pData, Dummy, Force);
+		if(TasSize)
+			return TasSize;
+	}
+	// bestclient
+
 	if(!Dummy)
 	{
-		return m_Controls.SnapInput(pData);
+		int Ret = m_Controls.SnapInput(pData);
+		if(m_Tas.IsRecordingActive())
+			m_Tas.OnRecordInput(pData, false);
+		return Ret;
 	}
 	if(m_aLocalIds[!g_Config.m_ClDummy] < 0)
 	{
@@ -680,6 +693,11 @@ int CGameClient::OnSnapInput(int *pData, bool Dummy, bool Force)
 // bestclient
 void CGameClient::PrepareInputForSend(int *pData, int Size, bool Dummy)
 {
+	if(m_Tas.IsPlaybackActive())
+	{
+		m_Tas.PrepareInputForSend(pData, Size, Dummy);
+		return;
+	}
 	m_FastPractice.PrepareInputForSend(pData, Size, Dummy);
 }
 // bestclient

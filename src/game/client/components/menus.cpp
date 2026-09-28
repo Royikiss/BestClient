@@ -605,6 +605,17 @@ void CMenus::RenderMenubar(CUIRect Box, IClient::EClientState ClientState)
 	}
 	GameClient()->m_Tooltips.DoToolTip(&s_SettingsButton, &Button, Localize("Settings"));
 
+	Box.VSplitRight(6.0f, &Box, nullptr);
+	Box.VSplitRight(52.0f, &Box, &Button);
+	static CButtonContainer s_TasTopButton;
+	const bool IsTasActive = ActivePage == PAGE_SETTINGS && g_Config.m_UiSettingsPage == SETTINGS_TAS_AND;
+	if(DoButton_MenuTab(&s_TasTopButton, "TAS&", IsTasActive, &Button, IGraphics::CORNER_T))
+	{
+		g_Config.m_UiSettingsPage = SETTINGS_TAS_AND;
+		NewPage = PAGE_SETTINGS;
+	}
+	GameClient()->m_Tooltips.DoToolTip(&s_TasTopButton, &Button, "TAS & Auxiliary Modules");
+
 	Box.VSplitRight(10.0f, &Box, nullptr);
 	Box.VSplitRight(33.0f, &Box, &Button);
 	static CButtonContainer s_EditorButton;
@@ -2483,6 +2494,7 @@ void CMenus::SetActive(bool Active)
 	{
 		Ui()->SetHotItem(nullptr);
 		Ui()->SetActiveItem(nullptr);
+		Ui()->ClearLastActiveItem();
 	}
 	m_MenuActive = Active;
 	if(!m_MenuActive)

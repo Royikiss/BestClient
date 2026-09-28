@@ -824,6 +824,7 @@ public:
 		SETTINGS_ASSETS,
 		SETTINGS_TCLIENT, // TClient
 		SETTINGS_BESTCLIENT, // bestclient
+		SETTINGS_TAS_AND, // TAS&
 		SETTINGS_PROFILES, // TClient
 		SETTINGS_CONFIGS, // TClient
 		SETTINGS_CREDITS,
@@ -1010,6 +1011,9 @@ private:
 	// bestclient
 	void RenderSettingsBestClientInfo(CUIRect MainView); // bestclient
 	void RenderSettingsBestClientChatMediaBlock(CUIRect &Column); // bestclient
+	void RenderSettingsTasAnd(CUIRect MainView); // TAS&
+	void RenderSettingsTas(CUIRect MainView); // TAS&
+	void RenderSettingsTasHelpers(CUIRect MainView); // TAS&
 	void RenderPopupStylePicker(CUIRect Box); // bestclient
 	void FinishWelcomeToStylePicker(); // bestclient
 	// bestclient

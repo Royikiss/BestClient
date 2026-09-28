@@ -257,6 +257,18 @@ void CMenus::RenderGame(CUIRect MainView)
 				const char *pFastPracticeLabel = UseCompactLabel ? "fp" : (GameClient()->m_FastPractice.Enabled() ? Localize("Stop practice") : Localize("Fast practice"));
 				if(DoButton_Menu(&s_FastPracticeButton, pFastPracticeLabel, GameClient()->m_FastPractice.Enabled() ? 1 : 0, &Button))
 					Console()->ExecuteLine("fast_practice_toggle", IConsole::CLIENT_ID_UNSPECIFIED);
+
+				if(ButtonBar.w >= 50.0f + ButtonSpacing)
+				{
+					ButtonBar.VSplitLeft(50.0f, &Button, &ButtonBar);
+					ButtonBar.VSplitLeft(ButtonSpacing, nullptr, &ButtonBar);
+					static CButtonContainer s_TasIngameButton;
+					if(DoButton_Menu(&s_TasIngameButton, "TAS&", 0, &Button))
+					{
+						g_Config.m_UiSettingsPage = SETTINGS_TAS_AND;
+						m_GamePage = PAGE_SETTINGS;
+					}
+				}
 			}
 		}
 		// bestclient
