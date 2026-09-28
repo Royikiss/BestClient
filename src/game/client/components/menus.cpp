@@ -609,12 +609,12 @@ void CMenus::RenderMenubar(CUIRect Box, IClient::EClientState ClientState)
 	Box.VSplitRight(52.0f, &Box, &Button);
 	static CButtonContainer s_TasTopButton;
 	const bool IsTasActive = ActivePage == PAGE_SETTINGS && g_Config.m_UiSettingsPage == SETTINGS_TAS_AND;
-	if(DoButton_MenuTab(&s_TasTopButton, "TAS&", IsTasActive, &Button, IGraphics::CORNER_T))
+	if(DoButton_MenuTab(&s_TasTopButton, BcLocalize("TAS&"), IsTasActive, &Button, IGraphics::CORNER_T))
 	{
 		g_Config.m_UiSettingsPage = SETTINGS_TAS_AND;
 		NewPage = PAGE_SETTINGS;
 	}
-	GameClient()->m_Tooltips.DoToolTip(&s_TasTopButton, &Button, "TAS & Auxiliary Modules");
+	GameClient()->m_Tooltips.DoToolTip(&s_TasTopButton, &Button, BcLocalize("TAS & Auxiliary Modules"));
 
 	Box.VSplitRight(10.0f, &Box, nullptr);
 	Box.VSplitRight(33.0f, &Box, &Button);

@@ -107,7 +107,7 @@ void CTas::StartRecord(bool ResetTrack)
 	}
 	m_State = STATE_RECORDING;
 	m_LastRecordGameTick = -1;
-	GameClient()->Echo(Localize("TAS recording started."));
+	GameClient()->Echo(BcLocalize("TAS recording started."));
 }
 
 void CTas::StopRecord()
@@ -116,7 +116,7 @@ void CTas::StopRecord()
 	{
 		m_State = STATE_IDLE;
 		char aBuf[128];
-		str_format(aBuf, sizeof(aBuf), Localize("TAS recording stopped. Recorded %d ticks (%.2f seconds)."), (int)m_vTicks.size(), (float)m_vTicks.size() / 50.0f);
+		str_format(aBuf, sizeof(aBuf), BcLocalize("TAS recording stopped. Recorded %d ticks (%.2f seconds)."), (int)m_vTicks.size(), (float)m_vTicks.size() / 50.0f);
 		GameClient()->Echo(aBuf);
 	}
 }
@@ -133,27 +133,27 @@ void CTas::ArmPlayback()
 {
 	if(m_vTicks.empty())
 	{
-		GameClient()->Echo(Localize("TAS: Cannot arm playback - no track loaded!"));
+		GameClient()->Echo(BcLocalize("TAS: Cannot arm playback - no track loaded!"));
 		return;
 	}
 	m_State = STATE_ARMED;
 	m_PlaybackTick = 0;
 	m_LastPlaybackGameTick = -1;
-	GameClient()->Echo(Localize("TAS: Playback ARMED. Waiting for race start line..."));
+	GameClient()->Echo(BcLocalize("TAS: Playback ARMED. Waiting for race start line..."));
 }
 
 void CTas::StartPlayback()
 {
 	if(m_vTicks.empty())
 	{
-		GameClient()->Echo(Localize("TAS: Cannot play - no track loaded!"));
+		GameClient()->Echo(BcLocalize("TAS: Cannot play - no track loaded!"));
 		return;
 	}
 	m_State = STATE_PLAYING;
 	m_PlaybackTick = 0;
 	m_LastPlaybackGameTick = Client()->PredGameTick(g_Config.m_ClDummy);
 	char aBuf[128];
-	str_format(aBuf, sizeof(aBuf), Localize("TAS: Playback started (%d ticks, %.2fs)."), (int)m_vTicks.size(), (float)m_vTicks.size() / 50.0f);
+	str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Playback started (%d ticks, %.2fs)."), (int)m_vTicks.size(), (float)m_vTicks.size() / 50.0f);
 	GameClient()->Echo(aBuf);
 }
 
@@ -166,7 +166,7 @@ void CTas::StopPlayback()
 		m_PlaybackTick = 0;
 		m_LastPlaybackGameTick = -1;
 		if(WasPlaying)
-			GameClient()->Echo(Localize("TAS: Playback stopped. Human control restored."));
+			GameClient()->Echo(BcLocalize("TAS: Playback stopped. Human control restored."));
 	}
 }
 
@@ -187,7 +187,7 @@ void CTas::SaveCheckpoint()
 {
 	if(m_State != STATE_RECORDING)
 	{
-		GameClient()->Echo(Localize("TAS: Checkpoints can only be saved during recording."));
+		GameClient()->Echo(BcLocalize("TAS: Checkpoints can only be saved during recording."));
 		return;
 	}
 	m_Checkpoint.m_Valid = true;
@@ -198,7 +198,7 @@ void CTas::SaveCheckpoint()
 		m_Checkpoint.m_Vel = vec2(GameClient()->m_Snap.m_pLocalCharacter->m_VelX / 256.0f, GameClient()->m_Snap.m_pLocalCharacter->m_VelY / 256.0f);
 	}
 	char aBuf[128];
-	str_format(aBuf, sizeof(aBuf), Localize("TAS: Checkpoint saved at tick %d."), m_Checkpoint.m_Tick);
+	str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Checkpoint saved at tick %d."), m_Checkpoint.m_Tick);
 	GameClient()->Echo(aBuf);
 }
 
@@ -206,7 +206,7 @@ void CTas::LoadCheckpoint()
 {
 	if(!m_Checkpoint.m_Valid)
 	{
-		GameClient()->Echo(Localize("TAS: No checkpoint saved!"));
+		GameClient()->Echo(BcLocalize("TAS: No checkpoint saved!"));
 		return;
 	}
 	if(m_State == STATE_RECORDING)
@@ -215,7 +215,7 @@ void CTas::LoadCheckpoint()
 			m_vTicks.resize(m_Checkpoint.m_Tick);
 		m_CurrentRecordTick = m_Checkpoint.m_Tick;
 		char aBuf[128];
-		str_format(aBuf, sizeof(aBuf), Localize("TAS: Rolled back to checkpoint tick %d."), m_Checkpoint.m_Tick);
+		str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Rolled back to checkpoint tick %d."), m_Checkpoint.m_Tick);
 		GameClient()->Echo(aBuf);
 	}
 }
@@ -227,7 +227,7 @@ void CTas::Clear()
 	m_vTicks.clear();
 	m_Checkpoint.m_Valid = false;
 	m_aLoadedFileName[0] = '\0';
-	GameClient()->Echo(Localize("TAS: In-memory track cleared."));
+	GameClient()->Echo(BcLocalize("TAS: In-memory track cleared."));
 }
 
 bool CTas::SaveToFile(const char *pFilename)
@@ -237,7 +237,7 @@ bool CTas::SaveToFile(const char *pFilename)
 
 	if(m_vTicks.empty())
 	{
-		GameClient()->Echo(Localize("TAS: Nothing to save, track is empty!"));
+		GameClient()->Echo(BcLocalize("TAS: Nothing to save, track is empty!"));
 		return false;
 	}
 
@@ -249,7 +249,7 @@ bool CTas::SaveToFile(const char *pFilename)
 	IOHANDLE File = Storage()->OpenFile(aPath, IOFLAG_WRITE, IStorage::TYPE_SAVE);
 	if(!File)
 	{
-		GameClient()->Echo(Localize("TAS: Failed to open file for writing!"));
+		GameClient()->Echo(BcLocalize("TAS: Failed to open file for writing!"));
 		return false;
 	}
 
@@ -291,7 +291,7 @@ bool CTas::SaveToFile(const char *pFilename)
 	RefreshFileList();
 
 	char aMsg[128];
-	str_format(aMsg, sizeof(aMsg), Localize("TAS: Saved %d ticks to %s.tas"), (int)m_vTicks.size(), pFilename);
+	str_format(aMsg, sizeof(aMsg), BcLocalize("TAS: Saved track to '%s' (%d ticks, %.2fs)."), pFilename, (int)m_vTicks.size(), (float)m_vTicks.size() / 50.0f);
 	GameClient()->Echo(aMsg);
 	return true;
 }
@@ -308,7 +308,7 @@ bool CTas::LoadFromFile(const char *pFilename)
 	if(!File)
 	{
 		char aErr[128];
-		str_format(aErr, sizeof(aErr), Localize("TAS: File '%s' not found!"), aPath);
+		str_format(aErr, sizeof(aErr), BcLocalize("TAS: File '%s' not found!"), aPath);
 		GameClient()->Echo(aErr);
 		return false;
 	}
@@ -321,7 +321,7 @@ bool CTas::LoadFromFile(const char *pFilename)
 	const char *pLine = LineReader.Get();
 	if(!pLine || str_comp_num(pLine, "# BESTCLIENT_TAS_V1", 19) != 0)
 	{
-		GameClient()->Echo(Localize("TAS: Invalid file format header!"));
+		GameClient()->Echo(BcLocalize("TAS: Invalid file format header!"));
 		return false;
 	}
 
@@ -381,7 +381,7 @@ bool CTas::LoadFromFile(const char *pFilename)
 	str_copy(g_Config.m_BcTasCurrentFile, pFilename);
 
 	char aMsg[128];
-	str_format(aMsg, sizeof(aMsg), Localize("TAS: Loaded '%s' (%d ticks, %.2fs)."), pFilename, (int)m_vTicks.size(), (float)m_vTicks.size() / 50.0f);
+	str_format(aMsg, sizeof(aMsg), BcLocalize("TAS: Loaded '%s' (%d ticks, %.2fs)."), pFilename, (int)m_vTicks.size(), (float)m_vTicks.size() / 50.0f);
 	GameClient()->Echo(aMsg);
 	return true;
 }
@@ -396,7 +396,7 @@ void CTas::DeleteTasFile(const char *pFilename)
 	if(Storage()->RemoveFile(aPath, IStorage::TYPE_SAVE))
 	{
 		char aMsg[128];
-		str_format(aMsg, sizeof(aMsg), Localize("TAS: Deleted '%s'."), aPath);
+		str_format(aMsg, sizeof(aMsg), BcLocalize("TAS: Deleted '%s'."), aPath);
 		GameClient()->Echo(aMsg);
 		RefreshFileList();
 	}
@@ -507,7 +507,7 @@ bool CTas::OnInput(const IInput::CEvent &Event)
 		if(Key == KEY_A || Key == KEY_D || Key == KEY_W || Key == KEY_S || Key == KEY_SPACE || Key == KEY_MOUSE_1 || Key == KEY_MOUSE_2)
 		{
 			StopPlayback();
-			GameClient()->Echo(Localize("TAS: Manual user input detected, playback interrupted."));
+			GameClient()->Echo(BcLocalize("TAS: Manual user input detected, playback interrupted."));
 			return false;
 		}
 	}
@@ -550,7 +550,7 @@ void CTas::OnRender()
 		if(!GameClient()->m_Snap.m_pLocalCharacter)
 		{
 			StopPlayback();
-			GameClient()->Echo(Localize("TAS: Player died, playback aborted."));
+			GameClient()->Echo(BcLocalize("TAS: Player died, playback aborted."));
 			return;
 		}
 	}
@@ -583,25 +583,25 @@ void CTas::RenderHud()
 	ColorRGBA BgColor(0.08f, 0.08f, 0.12f, 0.85f);
 	ColorRGBA BorderColor(0.25f, 0.35f, 0.50f, 0.90f);
 	ColorRGBA BadgeColor(0.5f, 0.5f, 0.5f, 1.0f);
-	const char *pStateName = "IDLE";
+	const char *pStateName = BcLocalize("IDLE");
 
 	if(m_State == STATE_RECORDING)
 	{
 		BadgeColor = ColorRGBA(0.95f, 0.25f, 0.25f, 1.0f);
 		BorderColor = ColorRGBA(0.85f, 0.25f, 0.25f, 0.95f);
-		pStateName = "REC";
+		pStateName = BcLocalize("REC");
 	}
 	else if(m_State == STATE_PLAYING)
 	{
 		BadgeColor = ColorRGBA(0.25f, 0.95f, 0.40f, 1.0f);
 		BorderColor = ColorRGBA(0.25f, 0.85f, 0.40f, 0.95f);
-		pStateName = "PLAY";
+		pStateName = BcLocalize("PLAY");
 	}
 	else if(m_State == STATE_ARMED)
 	{
 		BadgeColor = ColorRGBA(0.95f, 0.85f, 0.25f, 1.0f);
 		BorderColor = ColorRGBA(0.95f, 0.85f, 0.25f, 0.95f);
-		pStateName = "ARMED";
+		pStateName = BcLocalize("ARMED");
 	}
 
 	HudRect.Draw(BgColor, IGraphics::CORNER_ALL, 6.0f);
@@ -620,7 +620,7 @@ void CTas::RenderHud()
 
 	// File Name
 	Header.VSplitLeft(6.0f, nullptr, &Header);
-	const char *pDisplayFile = m_aLoadedFileName[0] ? m_aLoadedFileName : (m_State == STATE_RECORDING ? "[recording]" : "[none]");
+	const char *pDisplayFile = m_aLoadedFileName[0] ? m_aLoadedFileName : (m_State == STATE_RECORDING ? BcLocalize("[recording]") : BcLocalize("[none]"));
 	Ui()->DoLabel(&Header, pDisplayFile, 11.0f, TEXTALIGN_ML);
 
 	// Progress & Ticks
@@ -630,7 +630,7 @@ void CTas::RenderHud()
 	float Fraction = std::clamp((float)Cur / (float)Total, 0.0f, 1.0f);
 
 	char aTickBuf[64];
-	str_format(aTickBuf, sizeof(aTickBuf), "Tick: %d / %d (%.2fs)", Cur, Total, (float)Cur / 50.0f);
+	str_format(aTickBuf, sizeof(aTickBuf), BcLocalize("Tick: %d / %d (%.2fs)"), Cur, Total, (float)Cur / 50.0f);
 	Ui()->DoLabel(&Content, aTickBuf, 10.0f, TEXTALIGN_ML);
 
 	// Progress Bar

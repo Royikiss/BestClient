@@ -48,21 +48,21 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		StatusContent.HSplitTop(20.0f, &StatusBadge, &StatusText);
 
 		ColorRGBA BadgeCol = ColorRGBA(0.5f, 0.5f, 0.5f, 1.0f);
-		const char *pStateStr = "IDLE";
+		const char *pStateStr = BcLocalize("IDLE");
 		if(Tas.IsRecordingActive())
 		{
 			BadgeCol = ColorRGBA(0.95f, 0.25f, 0.25f, 1.0f);
-			pStateStr = "RECORDING";
+			pStateStr = BcLocalize("RECORDING");
 		}
 		else if(Tas.IsPlaybackActive())
 		{
 			BadgeCol = ColorRGBA(0.25f, 0.95f, 0.40f, 1.0f);
-			pStateStr = "PLAYING";
+			pStateStr = BcLocalize("PLAYING");
 		}
 		else if(Tas.IsArmed())
 		{
 			BadgeCol = ColorRGBA(0.95f, 0.85f, 0.25f, 1.0f);
-			pStateStr = "ARMED (WAITING START LINE)";
+			pStateStr = BcLocalize("ARMED (WAITING START LINE)");
 		}
 
 		CUIRect BadgeRect;
@@ -74,8 +74,8 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 
 		char aInfo[128];
 		int Cur = Tas.IsPlaybackActive() ? Tas.PlaybackTick() : (Tas.IsRecordingActive() ? Tas.RecordTick() : 0);
-		str_format(aInfo, sizeof(aInfo), Localize("File: %s  |  Ticks: %d / %d (%.2fs)"),
-			Tas.CurrentFile()[0] ? Tas.CurrentFile() : "<none>",
+		str_format(aInfo, sizeof(aInfo), BcLocalize("File: %s  |  Ticks: %d / %d (%.2fs)"),
+			Tas.CurrentFile()[0] ? Tas.CurrentFile() : BcLocalize("<none>"),
 			Cur, Tas.TotalTicks(), (float)Tas.TotalTicks() / 50.0f);
 		StatusText.HSplitTop(4.0f, nullptr, &StatusText);
 		Ui()->DoLabel(&StatusText, aInfo, 11.0f, TEXTALIGN_ML);
@@ -98,7 +98,7 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		BtnArm.VSplitMid(&BtnArm, &BtnPlay, 4.0f);
 
 		static CButtonContainer s_ArmBtn;
-		if(DoButton_Menu(&s_ArmBtn, Localize("Arm (Race)"), Tas.IsArmed() ? 1 : 0, &BtnArm))
+		if(DoButton_Menu(&s_ArmBtn, BcLocalize("Arm (Race)"), Tas.IsArmed() ? 1 : 0, &BtnArm))
 		{
 			if(Tas.IsArmed())
 				Tas.StopPlayback();
@@ -107,7 +107,7 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		}
 
 		static CButtonContainer s_PlayBtn;
-		if(DoButton_Menu(&s_PlayBtn, Localize("Play Now"), Tas.IsPlaybackActive() ? 1 : 0, &BtnPlay))
+		if(DoButton_Menu(&s_PlayBtn, BcLocalize("Play Now"), Tas.IsPlaybackActive() ? 1 : 0, &BtnPlay))
 		{
 			if(Tas.IsPlaybackActive())
 				Tas.StopPlayback();
@@ -116,7 +116,7 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		}
 
 		static CButtonContainer s_StopBtn;
-		if(DoButton_Menu(&s_StopBtn, Localize("Stop"), 0, &BtnStop))
+		if(DoButton_Menu(&s_StopBtn, BcLocalize("Stop"), 0, &BtnStop))
 		{
 			Tas.StopPlayback();
 			Tas.StopRecord();
@@ -128,19 +128,19 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		BtnRec.VSplitMid(&BtnRec, &BtnStopRec, 4.0f);
 
 		static CButtonContainer s_RecBtn;
-		if(DoButton_Menu(&s_RecBtn, Localize("Record"), Tas.IsRecordingActive() ? 1 : 0, &BtnRec))
+		if(DoButton_Menu(&s_RecBtn, BcLocalize("Record"), Tas.IsRecordingActive() ? 1 : 0, &BtnRec))
 		{
 			Tas.StartRecord(true);
 		}
 
 		static CButtonContainer s_StopRecBtn;
-		if(DoButton_Menu(&s_StopRecBtn, Localize("Stop Rec"), 0, &BtnStopRec))
+		if(DoButton_Menu(&s_StopRecBtn, BcLocalize("Stop Rec"), 0, &BtnStopRec))
 		{
 			Tas.StopRecord();
 		}
 
 		static CButtonContainer s_ClearBtn;
-		if(DoButton_Menu(&s_ClearBtn, Localize("Clear Track"), 0, &BtnClear))
+		if(DoButton_Menu(&s_ClearBtn, BcLocalize("Clear Track"), 0, &BtnClear))
 		{
 			Tas.Clear();
 		}
@@ -150,7 +150,7 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		CpRow.VSplitMid(&BtnSaveCp, &BtnLoadCp, 4.0f);
 
 		static CButtonContainer s_SaveCpBtn;
-		if(DoButton_Menu(&s_SaveCpBtn, Localize("Save Checkpoint"), 0, &BtnSaveCp))
+		if(DoButton_Menu(&s_SaveCpBtn, BcLocalize("Save Checkpoint"), 0, &BtnSaveCp))
 		{
 			Tas.SaveCheckpoint();
 		}
@@ -158,9 +158,9 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		static CButtonContainer s_LoadCpBtn;
 		char aLoadCpText[64];
 		if(Tas.HasCheckpoint())
-			str_format(aLoadCpText, sizeof(aLoadCpText), "%s (%d)", Localize("Load Checkpoint"), Tas.CheckpointTick());
+			str_format(aLoadCpText, sizeof(aLoadCpText), "%s (%d)", BcLocalize("Load Checkpoint"), Tas.CheckpointTick());
 		else
-			str_copy(aLoadCpText, Localize("Load Checkpoint"));
+			str_copy(aLoadCpText, BcLocalize("Load Checkpoint"));
 
 		if(DoButton_Menu(&s_LoadCpBtn, aLoadCpText, 0, &BtnLoadCp))
 		{
@@ -182,19 +182,19 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		AutoContent.HSplitTop(22.0f, &Row4, &AutoContent);
 
 		static CButtonContainer s_CbAutoStart;
-		if(DoButton_CheckBox(&s_CbAutoStart, Localize("Auto-start playback on crossing race start line"), g_Config.m_BcTasAutoStart, &Row1))
+		if(DoButton_CheckBox(&s_CbAutoStart, BcLocalize("Auto-start playback on crossing race start line"), g_Config.m_BcTasAutoStart, &Row1))
 			g_Config.m_BcTasAutoStart ^= 1;
 
 		static CButtonContainer s_CbDummy;
-		if(DoButton_CheckBox(&s_CbDummy, Localize("Play Dummy input if available in TAS file"), g_Config.m_BcTasPlaybackDummy, &Row2))
+		if(DoButton_CheckBox(&s_CbDummy, BcLocalize("Play Dummy input if available in TAS file"), g_Config.m_BcTasPlaybackDummy, &Row2))
 			g_Config.m_BcTasPlaybackDummy ^= 1;
 
 		static CButtonContainer s_CbStopOnInput;
-		if(DoButton_CheckBox(&s_CbStopOnInput, Localize("Abort playback upon manual mouse/keyboard action"), g_Config.m_BcTasAutoStopOnInput, &Row3))
+		if(DoButton_CheckBox(&s_CbStopOnInput, BcLocalize("Abort playback upon manual mouse/keyboard action"), g_Config.m_BcTasAutoStopOnInput, &Row3))
 			g_Config.m_BcTasAutoStopOnInput ^= 1;
 
 		static CButtonContainer s_CbShowHud;
-		if(DoButton_CheckBox(&s_CbShowHud, Localize("Show in-game TAS status and progress HUD"), g_Config.m_BcTasShowHud, &Row4))
+		if(DoButton_CheckBox(&s_CbShowHud, BcLocalize("Show in-game TAS status and progress HUD"), g_Config.m_BcTasShowHud, &Row4))
 			g_Config.m_BcTasShowHud ^= 1;
 	}
 
@@ -224,7 +224,7 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		Ui()->DoEditBox(&s_SaveFileNameInput, &EditBoxRect, 12.0f);
 
 		static CButtonContainer s_SaveFileBtn;
-		if(DoButton_Menu(&s_SaveFileBtn, Localize("Save Run"), 0, &SaveBtnRect))
+		if(DoButton_Menu(&s_SaveFileBtn, BcLocalize("Save Run"), 0, &SaveBtnRect))
 		{
 			const char *pName = s_SaveFileNameInput.GetString();
 			if(pName && pName[0])
@@ -274,7 +274,7 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 			CUIRect EmptyLabelRect = InnerList;
 			EmptyLabelRect.Margin(10.0f, &EmptyLabelRect);
 			TextRender()->TextColor(0.6f, 0.6f, 0.6f, 0.8f);
-			Ui()->DoLabel(&EmptyLabelRect, Localize("No .tas runs found. Record and save a run!"), 11.0f, TEXTALIGN_MC);
+			Ui()->DoLabel(&EmptyLabelRect, BcLocalize("No .tas runs found. Record and save a run!"), 11.0f, TEXTALIGN_MC);
 			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 		}
 
@@ -284,7 +284,7 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		BtnLoad.VSplitMid(&BtnLoad, &BtnRefresh, 6.0f);
 
 		static CButtonContainer s_LoadBtn;
-		if(DoButton_Menu(&s_LoadBtn, Localize("Load Selected"), 0, &BtnLoad))
+		if(DoButton_Menu(&s_LoadBtn, BcLocalize("Load Selected"), 0, &BtnLoad))
 		{
 			if(s_SelectedFileIndex >= 0 && s_SelectedFileIndex < (int)vFiles.size())
 				Tas.LoadFromFile(vFiles[s_SelectedFileIndex].c_str());
@@ -293,13 +293,13 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		}
 
 		static CButtonContainer s_RefreshBtn;
-		if(DoButton_Menu(&s_RefreshBtn, Localize("Refresh"), 0, &BtnRefresh))
+		if(DoButton_Menu(&s_RefreshBtn, BcLocalize("Refresh"), 0, &BtnRefresh))
 		{
 			Tas.RefreshFileList();
 		}
 
 		static CButtonContainer s_DeleteBtn;
-		if(DoButton_Menu(&s_DeleteBtn, Localize("Delete"), 0, &BtnDelete))
+		if(DoButton_Menu(&s_DeleteBtn, BcLocalize("Delete"), 0, &BtnDelete))
 		{
 			if(s_SelectedFileIndex >= 0 && s_SelectedFileIndex < (int)vFiles.size())
 			{
@@ -313,7 +313,7 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		CUIRect KeybindContent;
 		KeybindBox.Margin(6.0f, &KeybindContent);
 
-		Ui()->DoLabel(&KeybindContent, Localize("Quick Keybind Recommendations (type in F1 console):"), 11.0f, TEXTALIGN_TL);
+		Ui()->DoLabel(&KeybindContent, BcLocalize("Quick Keybind Recommendations (type in F1 console):"), 11.0f, TEXTALIGN_TL);
 		KeybindContent.HSplitTop(18.0f, nullptr, &KeybindContent);
 
 		const char *apBinds[] = {
@@ -349,14 +349,14 @@ void CMenus::RenderSettingsTasHelpers(CUIRect MainView)
 
 		CUIRect Title, RowBtn, Desc;
 		Content.HSplitTop(22.0f, &Title, &Content);
-		Ui()->DoLabel(&Title, Localize("Fast Practice (Local Sandbox World)"), 13.0f, TEXTALIGN_ML);
+		Ui()->DoLabel(&Title, BcLocalize("Fast Practice (Local Sandbox World)"), 13.0f, TEXTALIGN_ML);
 
 		Content.HSplitTop(6.0f, nullptr, &Content);
 		Content.HSplitTop(26.0f, &RowBtn, &Content);
 
 		static CButtonContainer s_FpBtn;
 		const bool FpEnabled = GameClient()->m_FastPractice.Enabled();
-		if(DoButton_Menu(&s_FpBtn, FpEnabled ? Localize("Stop Fast Practice") : Localize("Start Fast Practice"), FpEnabled ? 1 : 0, &RowBtn))
+		if(DoButton_Menu(&s_FpBtn, FpEnabled ? BcLocalize("Stop Fast Practice") : BcLocalize("Start Fast Practice"), FpEnabled ? 1 : 0, &RowBtn))
 		{
 			GameClient()->m_FastPractice.Toggle();
 		}
@@ -364,7 +364,7 @@ void CMenus::RenderSettingsTasHelpers(CUIRect MainView)
 		Content.HSplitTop(8.0f, nullptr, &Content);
 		Content.HSplitTop(50.0f, &Desc, &Content);
 		TextRender()->TextColor(0.7f, 0.7f, 0.7f, 1.0f);
-		Ui()->DoLabel(&Desc, Localize("Fast Practice runs a completely local simulation world on your client, allowing you to practice movements and record TAS runs offline without network lag or interference."), 11.0f, TEXTALIGN_ML);
+		Ui()->DoLabel(&Desc, BcLocalize("Fast Practice runs a completely local simulation world on your client, allowing you to practice movements and record TAS runs offline without network lag or interference."), 11.0f, TEXTALIGN_ML);
 		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 	}
 
@@ -379,12 +379,12 @@ void CMenus::RenderSettingsTasHelpers(CUIRect MainView)
 
 		CUIRect Title, Desc;
 		Content.HSplitTop(22.0f, &Title, &Content);
-		Ui()->DoLabel(&Title, Localize("Auxiliary Modules (辅助模块)"), 13.0f, TEXTALIGN_ML);
+		Ui()->DoLabel(&Title, BcLocalize("Auxiliary Modules"), 13.0f, TEXTALIGN_ML);
 
 		Content.HSplitTop(10.0f, nullptr, &Content);
 		Content.HSplitTop(60.0f, &Desc, &Content);
 		TextRender()->TextColor(0.75f, 0.85f, 0.95f, 1.0f);
-		Ui()->DoLabel(&Desc, Localize("This section is reserved for upcoming auxiliary modules and practice assistants.\nMore modules will be integrated here."), 12.0f, TEXTALIGN_ML);
+		Ui()->DoLabel(&Desc, BcLocalize("This section is reserved for upcoming auxiliary modules and practice assistants.\nMore modules will be integrated here."), 12.0f, TEXTALIGN_ML);
 		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 	}
 }
@@ -399,8 +399,8 @@ void CMenus::RenderSettingsTasAnd(CUIRect MainView)
 
 	// Subtabs: TAS, Auxiliary
 	const char *apTabNames[] = {
-		"TAS",
-		Localize("Auxiliary Modules (辅助)"),
+		BcLocalize("TAS"),
+		BcLocalize("Auxiliary"),
 	};
 	constexpr int NumTabs = 2;
 

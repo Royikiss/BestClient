@@ -263,11 +263,12 @@ void CMenus::RenderGame(CUIRect MainView)
 					ButtonBar.VSplitLeft(50.0f, &Button, &ButtonBar);
 					ButtonBar.VSplitLeft(ButtonSpacing, nullptr, &ButtonBar);
 					static CButtonContainer s_TasIngameButton;
-					if(DoButton_Menu(&s_TasIngameButton, "TAS&", 0, &Button))
+					if(DoButton_Menu(&s_TasIngameButton, BcLocalize("TAS&"), 0, &Button))
 					{
 						g_Config.m_UiSettingsPage = SETTINGS_TAS_AND;
 						m_GamePage = PAGE_SETTINGS;
 					}
+					GameClient()->m_Tooltips.DoToolTip(&s_TasIngameButton, &Button, BcLocalize("TAS & Auxiliary Modules"));
 				}
 			}
 		}

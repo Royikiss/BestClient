@@ -2197,3 +2197,244 @@ Others
 [Gradient]
 All
 == 全部
+
+[BestClient]
+TAS&
+== TAS&
+
+[BestClient]
+TAS
+== TAS
+
+[BestClient]
+Auxiliary
+== 辅助模块
+
+[BestClient]
+Auxiliary Modules
+== 辅助模块
+
+[BestClient]
+TAS & Auxiliary Modules
+== TAS 与辅助模块
+
+[BestClient]
+IDLE
+== 空闲
+
+[BestClient]
+RECORDING
+== 正在录制
+
+[BestClient]
+PLAYING
+== 正在回放
+
+[BestClient]
+ARMED (WAITING START LINE)
+== 已就绪 (等待起跑线)
+
+[BestClient]
+ARMED
+== 已就绪
+
+[BestClient]
+REC
+== 录制
+
+[BestClient]
+PLAY
+== 回放
+
+[BestClient]
+<none>
+== <无>
+
+[BestClient]
+[none]
+== [无]
+
+[BestClient]
+[recording]
+== [录制中]
+
+[BestClient]
+File: %s  |  Ticks: %d / %d (%.2fs)
+== 文件: %s  |  帧数: %d / %d (%.2f秒)
+
+[BestClient]
+Tick: %d / %d (%.2fs)
+== 帧数: %d / %d (%.2f秒)
+
+[BestClient]
+Arm (Race)
+== 起跑线就绪
+
+[BestClient]
+Play Now
+== 立即播放
+
+[BestClient]
+Stop
+== 停止
+
+[BestClient]
+Record
+== 录制
+
+[BestClient]
+Stop Rec
+== 停止录制
+
+[BestClient]
+Clear Track
+== 清空轨迹
+
+[BestClient]
+Save Checkpoint
+== 保存检查点
+
+[BestClient]
+Load Checkpoint
+== 读取检查点
+
+[BestClient]
+Auto-start playback on crossing race start line
+== 穿过起跑线时自动开始回放
+
+[BestClient]
+Play Dummy input if available in TAS file
+== 若 TAS 文件包含分身数据则同步回放
+
+[BestClient]
+Abort playback upon manual mouse/keyboard action
+== 手动键鼠操作时自动打断回放
+
+[BestClient]
+Show in-game TAS status and progress HUD
+== 在游戏内显示 TAS 状态与进度 HUD
+
+[BestClient]
+Save Run
+== 保存轨迹
+
+[BestClient]
+Load Selected
+== 加载选中项
+
+[BestClient]
+Refresh
+== 刷新
+
+[BestClient]
+Delete
+== 删除
+
+[BestClient]
+No .tas runs found. Record and save a run!
+== 未找到 .tas 轨迹文件。请先录制并保存！
+
+[BestClient]
+Quick Keybind Recommendations (type in F1 console):
+== 推荐快捷键绑定 (在 F1 控制台中输入):
+
+[BestClient]
+Fast Practice (Local Sandbox World)
+== 快速练习 (本地沙盒世界)
+
+[BestClient]
+Start Fast Practice
+== 启动快速练习
+
+[BestClient]
+Stop Fast Practice
+== 停止快速练习
+
+[BestClient]
+Fast Practice runs a completely local simulation world on your client, allowing you to practice movements and record TAS runs offline without network lag or interference.
+== 快速练习在客户端本地运行完全独立的模拟世界，让您不受网络延迟或干扰地练习身法及录制 TAS 轨迹。
+
+[BestClient]
+This section is reserved for upcoming auxiliary modules and practice assistants.\nMore modules will be integrated here.
+== 本区域预留给后续的辅助练习模块与身法助手。\n更多功能模块将持续整合于此。
+
+[BestClient]
+TAS: In-memory track cleared.
+== TAS: 内存中的轨迹已清空。
+
+[BestClient]
+TAS: Nothing to save, track is empty!
+== TAS: 轨迹为空，无可保存内容！
+
+[BestClient]
+TAS: Failed to open file for writing!
+== TAS: 无法打开文件进行写入！
+
+[BestClient]
+TAS: Saved track to '%s' (%d ticks, %.2fs).
+== TAS: 轨迹已保存至 '%s' (%d 帧, %.2f秒)。
+
+[BestClient]
+TAS: File '%s' not found!
+== TAS: 未找到文件 '%s'！
+
+[BestClient]
+TAS: Invalid file format header!
+== TAS: 无效的文件格式头！
+
+[BestClient]
+TAS: Loaded '%s' (%d ticks, %.2fs).
+== TAS: 已加载 '%s' (%d 帧, %.2f秒)。
+
+[BestClient]
+TAS: Deleted '%s'.
+== TAS: 已删除 '%s'。
+
+[BestClient]
+TAS: Cannot start playback, track is empty!
+== TAS: 轨迹为空，无法开始回放！
+
+[BestClient]
+TAS: Playback armed. Waiting for race start line...
+== TAS: 回放就绪。正在等待穿过起跑线...
+
+[BestClient]
+TAS: Playback started (%d ticks, %.2fs).
+== TAS: 回放已开始 (%d 帧, %.2f秒)。
+
+[BestClient]
+TAS: Playback stopped (at tick %d / %d).
+== TAS: 回放已停止 (位于第 %d / %d 帧)。
+
+[BestClient]
+TAS: Playback completed.
+== TAS: 回放完成。
+
+[BestClient]
+TAS: No checkpoint saved to load from!
+== TAS: 未保存检查点，无法读取！
+
+[BestClient]
+TAS: Loaded checkpoint at tick %d (trimmed %zu ticks).
+== TAS: 已读取第 %d 帧的检查点 (裁剪了 %zu 帧)。
+
+[BestClient]
+TAS: Checkpoint saved at tick %d.
+== TAS: 已在第 %d 帧保存检查点。
+
+[BestClient]
+TAS recording started.
+== TAS 录制已开始。
+
+[BestClient]
+TAS recording stopped. Recorded %d ticks (%.2f seconds).
+== TAS 录制已停止。共录制 %d 帧 (%.2f秒)。
+
+[BestClient]
+TAS: Manual user input detected, playback interrupted.
+== TAS: 检测到手动键鼠操作，回放已打断。
+
+[BestClient]
+TAS: Player died, playback aborted.
+== TAS: 玩家已死亡，回放终止。
+

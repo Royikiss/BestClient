@@ -2197,3 +2197,244 @@ Others
 [Gradient]
 All
 == Все
+
+[BestClient]
+TAS&
+== TAS&
+
+[BestClient]
+TAS
+== TAS
+
+[BestClient]
+Auxiliary
+== Модули
+
+[BestClient]
+Auxiliary Modules
+== Вспомогательные модули
+
+[BestClient]
+TAS & Auxiliary Modules
+== TAS и вспомогательные модули
+
+[BestClient]
+IDLE
+== ОЖИДАНИЕ
+
+[BestClient]
+RECORDING
+== ЗАПИСЬ
+
+[BestClient]
+PLAYING
+== ВОСПРОИЗВЕДЕНИЕ
+
+[BestClient]
+ARMED (WAITING START LINE)
+== ГОТОВ (ОЖИДАНИЕ ЛИНИИ СТАРТА)
+
+[BestClient]
+ARMED
+== ГОТОВ
+
+[BestClient]
+REC
+== ЗАПИСЬ
+
+[BestClient]
+PLAY
+== ПЛЕЙ
+
+[BestClient]
+<none>
+== <нет>
+
+[BestClient]
+[none]
+== [нет]
+
+[BestClient]
+[recording]
+== [запись]
+
+[BestClient]
+File: %s  |  Ticks: %d / %d (%.2fs)
+== Файл: %s  |  Тики: %d / %d (%.2fs)
+
+[BestClient]
+Tick: %d / %d (%.2fs)
+== Тик: %d / %d (%.2fs)
+
+[BestClient]
+Arm (Race)
+== На старт
+
+[BestClient]
+Play Now
+== Воспроизвести
+
+[BestClient]
+Stop
+== Стоп
+
+[BestClient]
+Record
+== Запись
+
+[BestClient]
+Stop Rec
+== Стоп запись
+
+[BestClient]
+Clear Track
+== Очистить трек
+
+[BestClient]
+Save Checkpoint
+== Сохранить чекпоинт
+
+[BestClient]
+Load Checkpoint
+== Загрузить чекпоинт
+
+[BestClient]
+Auto-start playback on crossing race start line
+== Автозапуск при пересечении линии старта
+
+[BestClient]
+Play Dummy input if available in TAS file
+== Воспроизводить ввод Dummy, если есть
+
+[BestClient]
+Abort playback upon manual mouse/keyboard action
+== Прерывать при ручном вводе
+
+[BestClient]
+Show in-game TAS status and progress HUD
+== Показывать внутриигровой HUD TAS
+
+[BestClient]
+Save Run
+== Сохранить
+
+[BestClient]
+Load Selected
+== Загрузить
+
+[BestClient]
+Refresh
+== Обновить
+
+[BestClient]
+Delete
+== Удалить
+
+[BestClient]
+No .tas runs found. Record and save a run!
+== TAS-файлы не найдены. Запишите и сохраните!
+
+[BestClient]
+Quick Keybind Recommendations (type in F1 console):
+== Рекомендуемые бинды (вводить в консоль F1):
+
+[BestClient]
+Fast Practice (Local Sandbox World)
+== Fast Practice (локальный мир)
+
+[BestClient]
+Start Fast Practice
+== Запустить Fast Practice
+
+[BestClient]
+Stop Fast Practice
+== Остановить Fast Practice
+
+[BestClient]
+Fast Practice runs a completely local simulation world on your client, allowing you to practice movements and record TAS runs offline without network lag or interference.
+== Fast Practice запускает полностью локальную симуляцию на вашем клиенте, позволяя тренироваться и записывать TAS офлайн без лагов.
+
+[BestClient]
+This section is reserved for upcoming auxiliary modules and practice assistants.\nMore modules will be integrated here.
+== Этот раздел зарезервирован для будущих вспомогательных модулей.\nОни будут добавлены позже.
+
+[BestClient]
+TAS: In-memory track cleared.
+== TAS: Трек в памяти очищен.
+
+[BestClient]
+TAS: Nothing to save, track is empty!
+== TAS: Нечего сохранять, трек пуст!
+
+[BestClient]
+TAS: Failed to open file for writing!
+== TAS: Не удалось открыть файл для записи!
+
+[BestClient]
+TAS: Saved track to '%s' (%d ticks, %.2fs).
+== TAS: Трек сохранен в '%s' (%d тиков, %.2fs).
+
+[BestClient]
+TAS: File '%s' not found!
+== TAS: Файл '%s' не найден!
+
+[BestClient]
+TAS: Invalid file format header!
+== TAS: Неверный заголовок формата файла!
+
+[BestClient]
+TAS: Loaded '%s' (%d ticks, %.2fs).
+== TAS: Загружен '%s' (%d тиков, %.2fs).
+
+[BestClient]
+TAS: Deleted '%s'.
+== TAS: Удален '%s'.
+
+[BestClient]
+TAS: Cannot start playback, track is empty!
+== TAS: Невозможно запустить, трек пуст!
+
+[BestClient]
+TAS: Playback armed. Waiting for race start line...
+== TAS: Воспроизведение готово. Ожидание линии старта...
+
+[BestClient]
+TAS: Playback started (%d ticks, %.2fs).
+== TAS: Воспроизведение запущено (%d тиков, %.2fs).
+
+[BestClient]
+TAS: Playback stopped (at tick %d / %d).
+== TAS: Воспроизведение остановлено (на тике %d / %d).
+
+[BestClient]
+TAS: Playback completed.
+== TAS: Воспроизведение завершено.
+
+[BestClient]
+TAS: No checkpoint saved to load from!
+== TAS: Нет сохраненного чекпоинта!
+
+[BestClient]
+TAS: Loaded checkpoint at tick %d (trimmed %zu ticks).
+== TAS: Чекпоинт загружен на тике %d (обрезано %zu тиков).
+
+[BestClient]
+TAS: Checkpoint saved at tick %d.
+== TAS: Чекпоинт сохранен на тике %d.
+
+[BestClient]
+TAS recording started.
+== TAS: Запись начата.
+
+[BestClient]
+TAS recording stopped. Recorded %d ticks (%.2f seconds).
+== TAS: Запись остановлена. Записано %d тиков (%.2f сек).
+
+[BestClient]
+TAS: Manual user input detected, playback interrupted.
+== TAS: Обнаружен ручной ввод, воспроизведение прервано.
+
+[BestClient]
+TAS: Player died, playback aborted.
+== TAS: Игрок погиб, воспроизведение прервано.
+

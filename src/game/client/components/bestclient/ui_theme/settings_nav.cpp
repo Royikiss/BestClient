@@ -391,7 +391,7 @@ void CMenus::RenderSettingsNavNewStyle(CUIRect &TabBar)
 		Localize("DDNet"),
 		TCLocalize("TClient"),
 		Localize("BestClient"),
-		"TAS&",
+		BcLocalize("TAS&"),
 	};
 
 	auto LeafName = [&](int Leaf) -> const char * {
@@ -418,8 +418,8 @@ void CMenus::RenderSettingsNavNewStyle(CUIRect &TabBar)
 		case SETTINGS_NAV_LEAF_BC_GAMEPLAY: return BcLocalize("Gameplay");
 		case SETTINGS_NAV_LEAF_BC_OTHERS: return BcLocalize("Others");
 		case SETTINGS_NAV_LEAF_BC_INFO: return BcLocalize("Info");
-		case SETTINGS_NAV_LEAF_TAS: return "TAS";
-		case SETTINGS_NAV_LEAF_TAS_HELPERS: return Localize("Auxiliary");
+		case SETTINGS_NAV_LEAF_TAS: return BcLocalize("TAS");
+		case SETTINGS_NAV_LEAF_TAS_HELPERS: return BcLocalize("Auxiliary");
 		default: return "";
 		}
 	};
