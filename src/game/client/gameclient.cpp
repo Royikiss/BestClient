@@ -637,7 +637,7 @@ int CGameClient::OnSnapInput(int *pData, bool Dummy, bool Force)
 	if(!Dummy)
 	{
 		int Ret = m_Controls.SnapInput(pData);
-		if(m_Tas.IsRecordingActive())
+		if(m_Tas.IsRecordingActive() && !m_FastPractice.Enabled())
 			m_Tas.OnRecordInput(pData, false);
 		return Ret;
 	}

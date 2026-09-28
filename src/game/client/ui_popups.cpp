@@ -187,6 +187,7 @@ void CUi::ClosePopupMenu(const SPopupMenuId *pId, bool IncludeDescendants)
 		else
 			m_vPopupMenus.erase(PopupMenuToClose);
 		SetActiveItem(nullptr);
+		ClearLastActiveItem();
 		if(m_pfnPopupMenuClosedCallback)
 			m_pfnPopupMenuClosedCallback();
 	}
@@ -199,6 +200,7 @@ void CUi::ClosePopupMenus()
 
 	m_vPopupMenus.clear();
 	SetActiveItem(nullptr);
+	ClearLastActiveItem();
 	if(m_pfnPopupMenuClosedCallback)
 		m_pfnPopupMenuClosedCallback();
 }

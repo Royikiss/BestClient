@@ -296,7 +296,7 @@ void CUi::Update()
 	if(Enabled())
 	{
 		CLineInput *pActiveInput = CLineInput::GetActiveInput();
-		if(pActiveInput && m_pLastActiveItem && pActiveInput != m_pLastActiveItem)
+		if(pActiveInput && CLineInput::GetActiveInputPriority() == EInputPriority::UI && m_pLastActiveItem && pActiveInput != m_pLastActiveItem)
 			pActiveInput->Deactivate();
 	}
 	else

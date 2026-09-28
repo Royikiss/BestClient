@@ -2438,3 +2438,90 @@ TAS: Manual user input detected, playback interrupted.
 TAS: Player died, playback aborted.
 == TAS: 玩家已死亡，回放终止。
 
+[BestClient]
+Save CP
+== 保存检查点
+
+[BestClient]
+Load CP
+== 读取检查点
+
+[BestClient]
+Rewind
+== 回退
+
+[BestClient]
+Record speed
+== 录制速度
+
+[BestClient]
+Auto-rewind on hitting hazard (death/freeze)
+== 触碰危险(黑水/冻结水/自杀方块)时自动回退
+
+[BestClient]
+Hazard rewind ticks
+== 危险回退帧数
+
+[BestClient]
+File: %s  |  Ticks: %d (%.2fs)  |  Speed: %d%%
+== 文件: %s  |  帧数: %d (%.2f秒)  |  速度: %d%%
+
+[BestClient]
+<sandbox>
+== <本地沙盒>
+
+[BestClient]
+TAS: Cannot start recording - must be alive in game!
+== TAS: 无法开始录制 - 必须在游戏中存活！
+
+[BestClient]
+TAS recording started (Local Sandbox, Speed: %d%%).
+== TAS 录制已开始 (本地沙盒模拟，录制速度: %d%%)。
+
+[BestClient]
+TAS: Cannot arm playback - no track loaded!
+== TAS: 无法就绪回放 - 未加载任何轨迹！
+
+[BestClient]
+TAS: Playback ARMED. Waiting for race start line...
+== TAS: 回放就绪。正在等待穿过起跑线...
+
+[BestClient]
+TAS: Cannot play - no track loaded!
+== TAS: 无法播放 - 未加载任何轨迹！
+
+[BestClient]
+TAS: Playback stopped. Human control restored.
+== TAS: 回放已停止。已恢复手动控制。
+
+[BestClient]
+TAS: Checkpoints can only be saved during recording.
+== TAS: 只能在录制过程中保存检查点。
+
+[BestClient]
+TAS: Cannot save checkpoint - character not found!
+== TAS: 无法保存检查点 - 未找到角色！
+
+[BestClient]
+TAS: No checkpoint saved!
+== TAS: 未保存检查点！
+
+[BestClient]
+TAS: Checkpoints can only be loaded during recording.
+== TAS: 只能在录制过程中读取检查点。
+
+[BestClient]
+TAS: Loaded checkpoint at tick %d.
+== TAS: 已读取第 %d 帧检查点并恢复实体位置与状态。
+
+[BestClient]
+TAS: Hazard touched! Auto-rewound %d ticks (to tick %d).
+== TAS: 触碰危险障碍！已自动回退 %d 帧 (至第 %d 帧)。
+
+[BestClient]
+TAS: Rewound %d ticks (to tick %d).
+== TAS: 已回退 %d 帧 (至第 %d 帧)。
+
+[BestClient]
+Tick: %d (%.2fs) | %d%%
+== 帧: %d (%.2f秒) | %d%%

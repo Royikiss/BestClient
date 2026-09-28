@@ -12,11 +12,16 @@
 #include <engine/sound.h>
 #include <engine/textrender.h>
 
+#include <game/client/components/bestclient/fast_practice.h>
 #include <game/client/components/bestclient/ui_theme/style.h>
 #include <game/client/components/bestclient/ui_theme/widgets.h>
 #include <game/client/gameclient.h>
+#include <game/client/prediction/entities/character.h>
+#include <game/client/prediction/entities/projectile.h>
+#include <game/client/projectile_data.h>
 #include <game/client/ui.h>
 #include <game/localization.h>
+#include <game/mapitems.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -55,6 +60,7 @@ void CTas::OnConsoleInit()
 	Console()->Register("tas_load", "s[name]", CFGFLAG_CLIENT, ConTasLoad, this, "Load TAS track from file (in tas/ directory)");
 	Console()->Register("tas_save_cp", "", CFGFLAG_CLIENT, ConTasSaveCheckpoint, this, "Save current recording checkpoint");
 	Console()->Register("tas_load_cp", "", CFGFLAG_CLIENT, ConTasLoadCheckpoint, this, "Roll back recording to last saved checkpoint");
+	Console()->Register("tas_rewind", "?i[ticks]", CFGFLAG_CLIENT, ConTasRewind, this, "Rewind TAS recording and character physics by N ticks");
 	Console()->Register("tas_clear", "", CFGFLAG_CLIENT, ConTasClear, this, "Clear in-memory TAS track");
 	Console()->Register("tas_status", "", CFGFLAG_CLIENT, ConTasStatus, this, "Print current TAS status");
 
@@ -99,15 +105,60 @@ void CTas::StartRecord(bool ResetTrack)
 	if(!g_Config.m_BcTasEnabled)
 		return;
 
+	// Automatically enable Fast Practice local sandbox
+	if(!GameClient()->m_FastPractice.Enabled())
+	{
+		if(!GameClient()->m_FastPractice.CanEnable())
+		{
+			GameClient()->Echo(BcLocalize("TAS: Cannot start recording - must be alive in game!"));
+			return;
+		}
+		GameClient()->m_FastPractice.Enable();
+	}
+
 	if(ResetTrack)
 	{
 		m_vTicks.clear();
 		m_CurrentRecordTick = 0;
 		m_Checkpoint.m_Valid = false;
 	}
+
 	m_State = STATE_RECORDING;
 	m_LastRecordGameTick = -1;
-	GameClient()->Echo(BcLocalize("TAS recording started."));
+	m_LastRecordTickTime = time_get();
+	m_RecordTimeAccumulator = 0;
+	m_HazardCooldownTicks = 0;
+
+	// Snapshot initial state
+	CFastPractice &Fp = GameClient()->m_FastPractice;
+	int LocalClientId = Fp.ControlledPracticeId();
+	int DummyClientId = Fp.CurrentPracticeDummyId();
+	CCharacter *pLocalChar = Fp.Active() ? Fp.PracticeWorld().GetCharacterById(LocalClientId) : nullptr;
+	if(pLocalChar)
+	{
+		m_InitialState.m_Valid = true;
+		m_InitialState.m_Tick = 0;
+		m_InitialState.m_GameTick = Fp.PracticeWorld().GameTick();
+		m_InitialState.m_Pos = pLocalChar->Core()->m_Pos;
+		m_InitialState.m_Vel = pLocalChar->Core()->m_Vel;
+		m_InitialState.m_MainCore = pLocalChar->GetCore();
+		m_InitialState.m_MainFreezeTime = pLocalChar->m_FreezeTime;
+		CCharacter *pDummyChar = (DummyClientId >= 0) ? Fp.PracticeWorld().GetCharacterById(DummyClientId) : nullptr;
+		if(pDummyChar)
+		{
+			m_InitialState.m_DummyCore = pDummyChar->GetCore();
+			m_InitialState.m_DummyFreezeTime = pDummyChar->m_FreezeTime;
+			m_InitialState.m_HasDummy = true;
+		}
+		else
+		{
+			m_InitialState.m_HasDummy = false;
+		}
+	}
+
+	char aBuf[128];
+	str_format(aBuf, sizeof(aBuf), BcLocalize("TAS recording started (Local Sandbox, Speed: %d%%)."), std::clamp(g_Config.m_BcTasRecordSpeed, 10, 100));
+	GameClient()->Echo(aBuf);
 }
 
 void CTas::StopRecord()
@@ -115,6 +166,7 @@ void CTas::StopRecord()
 	if(m_State == STATE_RECORDING)
 	{
 		m_State = STATE_IDLE;
+		m_RecordTimeAccumulator = 0;
 		char aBuf[128];
 		str_format(aBuf, sizeof(aBuf), BcLocalize("TAS recording stopped. Recorded %d ticks (%.2f seconds)."), (int)m_vTicks.size(), (float)m_vTicks.size() / 50.0f);
 		GameClient()->Echo(aBuf);
@@ -136,6 +188,11 @@ void CTas::ArmPlayback()
 		GameClient()->Echo(BcLocalize("TAS: Cannot arm playback - no track loaded!"));
 		return;
 	}
+
+	// Disable Fast Practice so playback triggers on server start line
+	if(GameClient()->m_FastPractice.Enabled())
+		GameClient()->m_FastPractice.Disable();
+
 	m_State = STATE_ARMED;
 	m_PlaybackTick = 0;
 	m_LastPlaybackGameTick = -1;
@@ -149,6 +206,11 @@ void CTas::StartPlayback()
 		GameClient()->Echo(BcLocalize("TAS: Cannot play - no track loaded!"));
 		return;
 	}
+
+	// Disable Fast Practice so playback operates directly on the server!
+	if(GameClient()->m_FastPractice.Enabled())
+		GameClient()->m_FastPractice.Disable();
+
 	m_State = STATE_PLAYING;
 	m_PlaybackTick = 0;
 	m_LastPlaybackGameTick = Client()->PredGameTick(g_Config.m_ClDummy);
@@ -190,16 +252,119 @@ void CTas::SaveCheckpoint()
 		GameClient()->Echo(BcLocalize("TAS: Checkpoints can only be saved during recording."));
 		return;
 	}
+
+	CFastPractice &Fp = GameClient()->m_FastPractice;
+	int LocalClientId = Fp.ControlledPracticeId();
+	int DummyClientId = Fp.CurrentPracticeDummyId();
+	CCharacter *pLocalChar = Fp.Active() ? Fp.PracticeWorld().GetCharacterById(LocalClientId) : nullptr;
+	if(!pLocalChar)
+	{
+		GameClient()->Echo(BcLocalize("TAS: Cannot save checkpoint - character not found!"));
+		return;
+	}
+
 	m_Checkpoint.m_Valid = true;
 	m_Checkpoint.m_Tick = (int)m_vTicks.size();
-	if(GameClient()->m_Snap.m_pLocalCharacter)
+	m_Checkpoint.m_GameTick = Fp.PracticeWorld().GameTick();
+	m_Checkpoint.m_Pos = pLocalChar->Core()->m_Pos;
+	m_Checkpoint.m_Vel = pLocalChar->Core()->m_Vel;
+	m_Checkpoint.m_MainCore = pLocalChar->GetCore();
+	m_Checkpoint.m_MainFreezeTime = pLocalChar->m_FreezeTime;
+
+	CCharacter *pDummyChar = (DummyClientId >= 0) ? Fp.PracticeWorld().GetCharacterById(DummyClientId) : nullptr;
+	if(pDummyChar)
 	{
-		m_Checkpoint.m_Pos = vec2(GameClient()->m_Snap.m_pLocalCharacter->m_X, GameClient()->m_Snap.m_pLocalCharacter->m_Y);
-		m_Checkpoint.m_Vel = vec2(GameClient()->m_Snap.m_pLocalCharacter->m_VelX / 256.0f, GameClient()->m_Snap.m_pLocalCharacter->m_VelY / 256.0f);
+		m_Checkpoint.m_DummyCore = pDummyChar->GetCore();
+		m_Checkpoint.m_DummyFreezeTime = pDummyChar->m_FreezeTime;
+		m_Checkpoint.m_HasDummy = true;
 	}
+	else
+	{
+		m_Checkpoint.m_HasDummy = false;
+	}
+
 	char aBuf[128];
 	str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Checkpoint saved at tick %d."), m_Checkpoint.m_Tick);
 	GameClient()->Echo(aBuf);
+}
+
+void CTas::RestorePhysicalState(const CCharacterCore &MainCore, int MainFreezeTime,
+                                const CCharacterCore &DummyCore, int DummyFreezeTime,
+                                int GameTick)
+{
+	if(!GameClient()->m_FastPractice.Active())
+		return;
+
+	CFastPractice &Fp = GameClient()->m_FastPractice;
+	int LocalClientId = Fp.ControlledPracticeId();
+	int DummyClientId = Fp.CurrentPracticeDummyId();
+
+	CCharacter *pLocalChar = Fp.PracticeWorld().GetCharacterById(LocalClientId);
+	if(pLocalChar)
+	{
+		pLocalChar->SetCore(MainCore);
+		pLocalChar->m_Pos = MainCore.m_Pos;
+		pLocalChar->m_PrevPos = MainCore.m_Pos;
+		pLocalChar->m_PrevPrevPos = MainCore.m_Pos;
+		pLocalChar->m_FreezeTime = MainFreezeTime;
+		pLocalChar->m_FrozenLastTick = (MainFreezeTime > 0);
+		pLocalChar->m_CanMoveInFreeze = false;
+	}
+
+	if(DummyClientId >= 0)
+	{
+		CCharacter *pDummyChar = Fp.PracticeWorld().GetCharacterById(DummyClientId);
+		if(pDummyChar)
+		{
+			pDummyChar->SetCore(DummyCore);
+			pDummyChar->m_Pos = DummyCore.m_Pos;
+			pDummyChar->m_PrevPos = DummyCore.m_Pos;
+			pDummyChar->m_PrevPrevPos = DummyCore.m_Pos;
+			pDummyChar->m_FreezeTime = DummyFreezeTime;
+			pDummyChar->m_FrozenLastTick = (DummyFreezeTime > 0);
+			pDummyChar->m_CanMoveInFreeze = false;
+		}
+	}
+
+	if(GameTick >= 0)
+	{
+		// Clean up any projectiles spawned after this tick
+		for(CProjectile *pProj = (CProjectile *)Fp.PracticeWorld().FindFirst(CGameWorld::ENTTYPE_PROJECTILE), *pNext = nullptr; pProj; pProj = pNext)
+		{
+			pNext = (CProjectile *)pProj->TypeNext();
+			const CProjectileData Data = pProj->GetData();
+			if((Data.m_Owner == LocalClientId || Data.m_Owner == DummyClientId) && Data.m_StartTick > GameTick)
+				pProj->Destroy();
+		}
+		Fp.PracticeWorld().m_GameTick = GameTick;
+	}
+
+	Fp.PublishParticipantCores(LocalClientId, DummyClientId);
+	if(pLocalChar)
+	{
+		Fp.CachePredictedCore(LocalClientId, MainCore);
+		Fp.CachePrevPredictedCore(LocalClientId, MainCore);
+		Fp.FillRenderCharacter(pLocalChar, Fp.m_aFastRenderCur[LocalClientId]);
+		Fp.FillRenderCharacter(pLocalChar, Fp.m_aFastRenderPrev[LocalClientId]);
+		Fp.m_aFastRenderValid[LocalClientId] = true;
+	}
+	if(DummyClientId >= 0)
+	{
+		if(CCharacter *pDummy = Fp.PracticeWorld().GetCharacterById(DummyClientId))
+		{
+			Fp.CachePredictedCore(DummyClientId, DummyCore);
+			Fp.CachePrevPredictedCore(DummyClientId, DummyCore);
+			Fp.FillRenderCharacter(pDummy, Fp.m_aFastRenderCur[DummyClientId]);
+			Fp.FillRenderCharacter(pDummy, Fp.m_aFastRenderPrev[DummyClientId]);
+			Fp.m_aFastRenderValid[DummyClientId] = true;
+		}
+	}
+	Fp.RepublishCachedCores();
+
+	if(pLocalChar)
+		GameClient()->m_LocalCharacterPos = MainCore.m_Pos;
+
+	m_RecordTimeAccumulator = 0;
 }
 
 void CTas::LoadCheckpoint()
@@ -209,15 +374,74 @@ void CTas::LoadCheckpoint()
 		GameClient()->Echo(BcLocalize("TAS: No checkpoint saved!"));
 		return;
 	}
-	if(m_State == STATE_RECORDING)
+	if(m_State != STATE_RECORDING)
 	{
-		if(m_Checkpoint.m_Tick < (int)m_vTicks.size())
-			m_vTicks.resize(m_Checkpoint.m_Tick);
-		m_CurrentRecordTick = m_Checkpoint.m_Tick;
-		char aBuf[128];
-		str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Rolled back to checkpoint tick %d."), m_Checkpoint.m_Tick);
-		GameClient()->Echo(aBuf);
+		GameClient()->Echo(BcLocalize("TAS: Checkpoints can only be loaded during recording."));
+		return;
 	}
+
+	int TargetTick = std::clamp(m_Checkpoint.m_Tick, 0, (int)m_vTicks.size());
+	m_vTicks.resize(TargetTick);
+	m_CurrentRecordTick = TargetTick;
+
+	RestorePhysicalState(m_Checkpoint.m_MainCore, m_Checkpoint.m_MainFreezeTime,
+	                     m_Checkpoint.m_DummyCore, m_Checkpoint.m_DummyFreezeTime,
+	                     m_Checkpoint.m_GameTick);
+
+	char aBuf[128];
+	str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Loaded checkpoint at tick %d."), TargetTick);
+	GameClient()->Echo(aBuf);
+}
+
+void CTas::Rewind(int NumTicks, bool IsAutoHazard)
+{
+	if(m_State != STATE_RECORDING)
+		return;
+
+	if(m_vTicks.empty())
+	{
+		if(IsAutoHazard && m_InitialState.m_Valid)
+		{
+			RestorePhysicalState(m_InitialState.m_MainCore, m_InitialState.m_MainFreezeTime,
+			                     m_InitialState.m_DummyCore, m_InitialState.m_DummyFreezeTime,
+			                     m_InitialState.m_GameTick);
+		}
+		return;
+	}
+
+	int CurTicks = (int)m_vTicks.size();
+	int TargetTick = std::max(0, CurTicks - NumTicks);
+
+	if(TargetTick == 0)
+	{
+		m_vTicks.clear();
+		m_CurrentRecordTick = 0;
+		if(m_InitialState.m_Valid)
+		{
+			RestorePhysicalState(m_InitialState.m_MainCore, m_InitialState.m_MainFreezeTime,
+			                     m_InitialState.m_DummyCore, m_InitialState.m_DummyFreezeTime,
+			                     m_InitialState.m_GameTick);
+		}
+	}
+	else
+	{
+		m_vTicks.resize(TargetTick);
+		m_CurrentRecordTick = TargetTick;
+		const STasTick &Snap = m_vTicks[TargetTick - 1];
+		RestorePhysicalState(Snap.m_MainCore, Snap.m_MainFreezeTime,
+		                     Snap.m_DummyCore, Snap.m_DummyFreezeTime,
+		                     Snap.m_GameTick);
+	}
+
+	if(g_Config.m_SndGame && !GameClient()->m_SuppressEvents)
+		GameClient()->m_Sounds.Play(CSounds::CHN_GLOBAL, SOUND_PLAYER_SPAWN, 1.0f);
+
+	char aBuf[128];
+	if(IsAutoHazard)
+		str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Hazard touched! Auto-rewound %d ticks (to tick %d)."), NumTicks, TargetTick);
+	else
+		str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Rewound %d ticks (to tick %d)."), NumTicks, TargetTick);
+	GameClient()->Echo(aBuf);
 }
 
 void CTas::Clear()
@@ -630,7 +854,10 @@ void CTas::RenderHud()
 	float Fraction = std::clamp((float)Cur / (float)Total, 0.0f, 1.0f);
 
 	char aTickBuf[64];
-	str_format(aTickBuf, sizeof(aTickBuf), BcLocalize("Tick: %d / %d (%.2fs)"), Cur, Total, (float)Cur / 50.0f);
+	if(m_State == STATE_RECORDING)
+		str_format(aTickBuf, sizeof(aTickBuf), BcLocalize("Tick: %d (%.2fs) | %d%%"), Cur, (float)Cur / 50.0f, std::clamp(g_Config.m_BcTasRecordSpeed, 10, 100));
+	else
+		str_format(aTickBuf, sizeof(aTickBuf), BcLocalize("Tick: %d / %d (%.2fs)"), Cur, Total, (float)Cur / 50.0f);
 	Ui()->DoLabel(&Content, aTickBuf, 10.0f, TEXTALIGN_ML);
 
 	// Progress Bar
@@ -733,4 +960,158 @@ void CTas::ConTasStatus(IConsole::IResult *pResult, void *pUserData)
 		pThis->m_aLoadedFileName[0] ? pThis->m_aLoadedFileName : "<none>",
 		pThis->m_Checkpoint.m_Valid ? "Yes" : "No");
 	pThis->GameClient()->Echo(aBuf);
+}
+
+void CTas::ConTasRewind(IConsole::IResult *pResult, void *pUserData)
+{
+	CTas *pThis = static_cast<CTas *>(pUserData);
+	int Ticks = pResult->NumArguments() > 0 ? pResult->GetInteger(0) : g_Config.m_BcTasRewindTicks;
+	pThis->Rewind(Ticks, false);
+}
+
+int CTas::ConsumeSlowMoTicks()
+{
+	if(m_State != STATE_RECORDING)
+		return 0;
+
+	int Speed = std::clamp(g_Config.m_BcTasRecordSpeed, 10, 100);
+	int64_t Freq = time_freq();
+	int64_t Now = time_get();
+	int64_t Elapsed = Now - m_LastRecordTickTime;
+	m_LastRecordTickTime = Now;
+	if(Elapsed > Freq)
+		Elapsed = Freq;
+	m_RecordTimeAccumulator += Elapsed;
+
+	int64_t TickInterval = (Freq * 2) / Speed;
+	int Ticks = 0;
+	while(m_RecordTimeAccumulator >= TickInterval)
+	{
+		m_RecordTimeAccumulator -= TickInterval;
+		Ticks++;
+		if(Ticks >= 5)
+		{
+			m_RecordTimeAccumulator = 0;
+			break;
+		}
+	}
+	return Ticks;
+}
+
+bool CTas::IsHazard(const CCharacter *pChar) const
+{
+	if(!pChar || !Collision())
+		return false;
+
+	// 1. Freeze states
+	if(pChar->m_FreezeTime > 0 || pChar->Core()->m_FreezeEnd != 0 ||
+	   pChar->Core()->m_DeepFrozen || pChar->Core()->m_LiveFrozen || pChar->Core()->m_IsInFreeze)
+	{
+		return true;
+	}
+
+	// 2. Tile checks at center and corners
+	const vec2 Pos = pChar->Core()->m_Pos;
+	const float Radius = pChar->GetProximityRadius() / 3.0f;
+	const vec2 aOffsets[] = {
+		vec2(0.0f, 0.0f),
+		vec2(Radius, 0.0f),
+		vec2(-Radius, 0.0f),
+		vec2(0.0f, Radius),
+		vec2(0.0f, -Radius),
+		vec2(Radius, Radius),
+		vec2(-Radius, -Radius),
+		vec2(Radius, -Radius),
+		vec2(-Radius, Radius),
+	};
+
+	for(const vec2 &Offset : aOffsets)
+	{
+		const int Index = Collision()->GetPureMapIndex(Pos + Offset);
+		if(Index < 0)
+			continue;
+
+		const int Tile = Collision()->GetTileIndex(Index);
+		const int Front = Collision()->GetFrontTileIndex(Index);
+		const int Switch = Collision()->GetSwitchType(Index);
+
+		for(int T : {Tile, Front, Switch})
+		{
+			if(T == TILE_DEATH || T == TILE_FREEZE || T == TILE_DFREEZE || T == TILE_LFREEZE)
+				return true;
+		}
+	}
+
+	return false;
+}
+
+bool CTas::CheckHazardAndRewind(int LocalClientId, int DummyClientId)
+{
+	if(m_State != STATE_RECORDING)
+		return false;
+
+	if(m_HazardCooldownTicks > 0)
+	{
+		m_HazardCooldownTicks--;
+		return false;
+	}
+
+	if(!g_Config.m_BcTasAutoRewind)
+		return false;
+
+	CFastPractice &Fp = GameClient()->m_FastPractice;
+	CCharacter *pLocalChar = Fp.PracticeWorld().GetCharacterById(LocalClientId);
+	if(!pLocalChar)
+		return false;
+
+	bool LocalHazard = IsHazard(pLocalChar);
+	bool DummyHazard = false;
+	if(DummyClientId >= 0)
+	{
+		if(CCharacter *pDummyChar = Fp.PracticeWorld().GetCharacterById(DummyClientId))
+			DummyHazard = IsHazard(pDummyChar);
+	}
+
+	if(!LocalHazard && !DummyHazard)
+		return false;
+
+	int RewindTicks = std::clamp(g_Config.m_BcTasRewindTicks, 5, 200);
+	Rewind(RewindTicks, true);
+	m_HazardCooldownTicks = 5;
+	return true;
+}
+
+void CTas::RecordPracticeTick(int LocalClientId, int DummyClientId, int GameTick)
+{
+	if(m_State != STATE_RECORDING)
+		return;
+
+	CFastPractice &Fp = GameClient()->m_FastPractice;
+	CCharacter *pLocalChar = Fp.PracticeWorld().GetCharacterById(LocalClientId);
+	if(!pLocalChar)
+		return;
+
+	STasTick NewTick{};
+	NewTick.m_Tick = (int)m_vTicks.size();
+	NewTick.m_GameTick = GameTick;
+	NewTick.m_MainInput = *pLocalChar->LatestInput();
+	NewTick.m_Pos = pLocalChar->Core()->m_Pos;
+	NewTick.m_Vel = pLocalChar->Core()->m_Vel;
+	NewTick.m_MainCore = pLocalChar->GetCore();
+	NewTick.m_MainFreezeTime = pLocalChar->m_FreezeTime;
+
+	if(DummyClientId >= 0)
+	{
+		CCharacter *pDummyChar = Fp.PracticeWorld().GetCharacterById(DummyClientId);
+		if(pDummyChar)
+		{
+			NewTick.m_DummyInput = *pDummyChar->LatestInput();
+			NewTick.m_DummyCore = pDummyChar->GetCore();
+			NewTick.m_DummyFreezeTime = pDummyChar->m_FreezeTime;
+			NewTick.m_HasDummy = true;
+		}
+	}
+
+	m_vTicks.push_back(NewTick);
+	m_CurrentRecordTick = (int)m_vTicks.size();
 }

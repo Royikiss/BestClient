@@ -598,6 +598,7 @@ public:
 		if(pId)
 			m_pLastActiveItem = pId;
 	}
+	void ClearLastActiveItem() { m_pLastActiveItem = nullptr; }
 	bool CheckActiveItem(const void *pId)
 	{
 		if(m_pActiveItem == pId)

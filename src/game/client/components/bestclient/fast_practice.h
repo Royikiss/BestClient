@@ -18,6 +18,8 @@
 
 class CFastPractice : public CComponent
 {
+	friend class CTas;
+
 public:
 	struct SLocalRaceState
 	{

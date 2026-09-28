@@ -2438,3 +2438,90 @@ TAS: Manual user input detected, playback interrupted.
 TAS: Player died, playback aborted.
 == TAS: Игрок погиб, воспроизведение прервано.
 
+[BestClient]
+Save CP
+== Сохранить чекпоинт
+
+[BestClient]
+Load CP
+== Загрузить чекпоинт
+
+[BestClient]
+Rewind
+== Перемотка
+
+[BestClient]
+Record speed
+== Скорость записи
+
+[BestClient]
+Auto-rewind on hitting hazard (death/freeze)
+== Авто-перемотка при опасности (смерть/заморозка)
+
+[BestClient]
+Hazard rewind ticks
+== Тики перемотки при опасности
+
+[BestClient]
+File: %s  |  Ticks: %d (%.2fs)  |  Speed: %d%%
+== Файл: %s  |  Тики: %d (%.2fs)  |  Скорость: %d%%
+
+[BestClient]
+<sandbox>
+== <песочница>
+
+[BestClient]
+TAS: Cannot start recording - must be alive in game!
+== TAS: Невозможно начать запись - персонаж должен быть жив!
+
+[BestClient]
+TAS recording started (Local Sandbox, Speed: %d%%).
+== TAS: Запись начата (Локальная песочница, Скорость: %d%%).
+
+[BestClient]
+TAS: Cannot arm playback - no track loaded!
+== TAS: Невозможно подготовить воспроизведение - трек не загружен!
+
+[BestClient]
+TAS: Playback ARMED. Waiting for race start line...
+== TAS: Воспроизведение ГОТОВО. Ожидание линии старта...
+
+[BestClient]
+TAS: Cannot play - no track loaded!
+== TAS: Невозможно запустить - трек не загружен!
+
+[BestClient]
+TAS: Playback stopped. Human control restored.
+== TAS: Воспроизведение остановлено. Управление восстановлено.
+
+[BestClient]
+TAS: Checkpoints can only be saved during recording.
+== TAS: Чекпоинты можно сохранять только во время записи.
+
+[BestClient]
+TAS: Cannot save checkpoint - character not found!
+== TAS: Не удалось сохранить чекпоинт - персонаж не найден!
+
+[BestClient]
+TAS: No checkpoint saved!
+== TAS: Нет сохраненного чекпоинта!
+
+[BestClient]
+TAS: Checkpoints can only be loaded during recording.
+== TAS: Чекпоинты можно загружать только во время записи.
+
+[BestClient]
+TAS: Loaded checkpoint at tick %d.
+== TAS: Чекпоинт загружен на тике %d.
+
+[BestClient]
+TAS: Hazard touched! Auto-rewound %d ticks (to tick %d).
+== TAS: Касание опасности! Авто-перемотка на %d тиков (к тику %d).
+
+[BestClient]
+TAS: Rewound %d ticks (to tick %d).
+== TAS: Перемотано на %d тиков (к тику %d).
+
+[BestClient]
+Tick: %d (%.2fs) | %d%%
+== Тик: %d (%.2fs) | %d%%

@@ -11,6 +11,7 @@
 #include <game/client/animstate.h>
 #include <game/client/components/bestclient/bestclient.h>
 #include <game/client/components/bestclient/inputs.h>
+#include <game/client/components/bestclient/tas.h>
 #include <game/client/gameclient.h>
 #include <game/client/prediction/entities/character.h>
 #include <game/client/prediction/entities/laser.h>
@@ -1338,10 +1339,13 @@ void CFastPractice::TickPracticeWorld()
 	const int FinalTickOthers = FinalTickRegular + FastInputOthersTicks;
 	const bool FastInputOverrun = FinalTickSelf > FinalTickRegular;
 
-	if(m_PracticeWorld.GameTick() > FinalTickRegular || FinalTickRegular - m_PracticeWorld.GameTick() > Client()->GameTickSpeed() * 3)
+	if(!GameClient()->m_Tas.IsRecordingActive())
 	{
-		m_NeedsRebuild = true;
-		return;
+		if(m_PracticeWorld.GameTick() > FinalTickRegular || FinalTickRegular - m_PracticeWorld.GameTick() > Client()->GameTickSpeed() * 3)
+		{
+			m_NeedsRebuild = true;
+			return;
+		}
 	}
 
 	if(FastInputOverrun)
@@ -1366,8 +1370,24 @@ void CFastPractice::TickPracticeWorld()
 		HasRegularWorld = true;
 	}
 
-	for(int Tick = BaseGameTick + 1; Tick <= FinalTickSelf; Tick++)
+	int TargetTicks = 0;
+	if(GameClient()->m_Tas.IsRecordingActive())
 	{
+		TargetTicks = GameClient()->m_Tas.ConsumeSlowMoTicks();
+		if(TargetTicks <= 0)
+		{
+			RepublishCachedCores();
+			return;
+		}
+	}
+	else
+	{
+		TargetTicks = FinalTickSelf - BaseGameTick;
+	}
+
+	for(int Step = 0; Step < TargetTicks; Step++)
+	{
+		const int Tick = BaseGameTick + 1 + Step;
 		pLocalChar = m_PracticeWorld.GetCharacterById(LocalClientId);
 		pDummyChar = (m_RequireDummy && DummyClientId >= 0) ? m_PracticeWorld.GetCharacterById(DummyClientId) : nullptr;
 		if(!pLocalChar || (m_RequireDummy && !pDummyChar))
@@ -1478,7 +1498,7 @@ void CFastPractice::TickPracticeWorld()
 		}
 
 		const bool DummyFirst = pInputData && pDummyInputData && pDummyChar && pDummyChar->GetCid() < pLocalChar->GetCid();
-		const bool RegularTick = Tick <= FinalTickRegular;
+		const bool RegularTick = GameClient()->m_Tas.IsRecordingActive() ? true : (Tick <= FinalTickRegular);
 		const bool PredictEvents = m_PracticeWorld.m_WorldConfig.m_PredictEvents;
 		if(!RegularTick)
 			m_PracticeWorld.m_WorldConfig.m_PredictEvents = false;
@@ -1547,16 +1567,25 @@ void CFastPractice::TickPracticeWorld()
 			PlayCoreEvents(pLocalChar, Tick);
 			PlayCoreEvents(pDummyChar, Tick);
 
-			auto ResetIfDead = [&](int ClientId, CCharacter *pChar) {
-				if(!pChar || !IsDeathTile(pChar))
-					return;
-				ResetCharacterToSaved(ClientId, pChar, Tick);
-			};
-			ResetIfDead(LocalClientId, pLocalChar);
-			if(pDummyChar)
-				ResetIfDead(DummyClientId, pDummyChar);
-			pLocalChar = m_PracticeWorld.GetCharacterById(LocalClientId);
-			pDummyChar = (m_RequireDummy && DummyClientId >= 0) ? m_PracticeWorld.GetCharacterById(DummyClientId) : nullptr;
+			if(GameClient()->m_Tas.IsRecordingActive())
+			{
+				if(GameClient()->m_Tas.CheckHazardAndRewind(LocalClientId, DummyClientId))
+					break;
+				GameClient()->m_Tas.RecordPracticeTick(LocalClientId, DummyClientId, Tick);
+			}
+			else
+			{
+				auto ResetIfDead = [&](int ClientId, CCharacter *pChar) {
+					if(!pChar || !IsDeathTile(pChar))
+						return;
+					ResetCharacterToSaved(ClientId, pChar, Tick);
+				};
+				ResetIfDead(LocalClientId, pLocalChar);
+				if(pDummyChar)
+					ResetIfDead(DummyClientId, pDummyChar);
+				pLocalChar = m_PracticeWorld.GetCharacterById(LocalClientId);
+				pDummyChar = (m_RequireDummy && DummyClientId >= 0) ? m_PracticeWorld.GetCharacterById(DummyClientId) : nullptr;
+			}
 		}
 
 		CollectTrackedProjectiles(m_PracticeWorld, LocalClientId, DummyClientId, vTrackedExplosiveAfter);
@@ -1602,12 +1631,29 @@ void CFastPractice::TickPracticeWorld()
 			GameClient()->m_aLastNewPredictedTick[DummyInputConn] = Tick;
 	}
 
+	if(GameClient()->m_Tas.IsRecordingActive())
+	{
+		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+		{
+			if(!IsPracticeParticipant(ClientId))
+				continue;
+			if(CCharacter *pChar = m_PracticeWorld.GetCharacterById(ClientId))
+			{
+				CachePredictedCore(ClientId, pChar->GetCore());
+				CachePrevPredictedCore(ClientId, pChar->GetCore());
+				FillRenderCharacter(pChar, m_aFastRenderCur[ClientId]);
+				FillRenderCharacter(pChar, m_aFastRenderPrev[ClientId]);
+				m_aFastRenderValid[ClientId] = true;
+			}
+		}
+	}
+
 	if(FastInputOverrun && HasRegularWorld)
 	{
 		m_PracticeWorld.CopyWorldClean(&RegularWorld);
 		SyncPracticeWorldConfig(m_PracticeWorld);
 	}
-	if(!FastInputOverrun)
+	if(!FastInputOverrun && !GameClient()->m_Tas.IsRecordingActive())
 		std::fill(std::begin(m_aFastRenderValid), std::end(m_aFastRenderValid), false);
 
 	GameClient()->m_PredictedDummyId = CurrentPracticeDummyId();

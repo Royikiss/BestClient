@@ -604,3 +604,6 @@ MACRO_CONFIG_INT(BcTasShowHud, bc_tas_show_hud, 1, 0, 1, CFGFLAG_CLIENT | CFGFLA
 MACRO_CONFIG_INT(BcTasShowTrajectory, bc_tas_show_trajectory, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show TAS predicted trajectory path")
 MACRO_CONFIG_STR(BcTasCurrentFile, bc_tas_current_file, 64, "default", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Selected TAS run filename")
 MACRO_CONFIG_INT(BcTasTab, bc_tas_tab, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Selected subtab in TAS& menu (0=TAS, 1=Helpers)")
+MACRO_CONFIG_INT(BcTasRecordSpeed, bc_tas_record_speed, 50, 10, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "TAS recording game speed percentage (10-100%)")
+MACRO_CONFIG_INT(BcTasAutoRewind, bc_tas_auto_rewind, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto rewind on touching hazard tiles (death/freeze)")
+MACRO_CONFIG_INT(BcTasRewindTicks, bc_tas_rewind_ticks, 30, 5, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Number of ticks to rewind when touching hazard or manual rewind")

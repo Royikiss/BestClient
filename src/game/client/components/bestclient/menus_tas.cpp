@@ -32,14 +32,18 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 	// LEFT COLUMN: Controls, Automation, Status
 	{
 		// 1. Status Block
-		CUIRect StatusBox, ControlBox, AutomationBox;
+		// 1. Status Block
+		CUIRect StatusBox, ControlBox, SettingsBox, AutomationBox;
 		LeftColumn.HSplitTop(70.0f, &StatusBox, &LeftColumn);
-		LeftColumn.HSplitTop(10.0f, nullptr, &LeftColumn);
+		LeftColumn.HSplitTop(8.0f, nullptr, &LeftColumn);
 
 		LeftColumn.HSplitTop(120.0f, &ControlBox, &LeftColumn);
-		LeftColumn.HSplitTop(10.0f, nullptr, &LeftColumn);
+		LeftColumn.HSplitTop(8.0f, nullptr, &LeftColumn);
 
-		LeftColumn.HSplitTop(130.0f, &AutomationBox, &LeftColumn);
+		LeftColumn.HSplitTop(86.0f, &SettingsBox, &LeftColumn);
+		LeftColumn.HSplitTop(8.0f, nullptr, &LeftColumn);
+
+		LeftColumn.HSplitTop(110.0f, &AutomationBox, &LeftColumn);
 
 		// Render Status
 		StatusBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 6.0f);
@@ -74,9 +78,18 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 
 		char aInfo[128];
 		int Cur = Tas.IsPlaybackActive() ? Tas.PlaybackTick() : (Tas.IsRecordingActive() ? Tas.RecordTick() : 0);
-		str_format(aInfo, sizeof(aInfo), BcLocalize("File: %s  |  Ticks: %d / %d (%.2fs)"),
-			Tas.CurrentFile()[0] ? Tas.CurrentFile() : BcLocalize("<none>"),
-			Cur, Tas.TotalTicks(), (float)Tas.TotalTicks() / 50.0f);
+		if(Tas.IsRecordingActive())
+		{
+			str_format(aInfo, sizeof(aInfo), BcLocalize("File: %s  |  Ticks: %d (%.2fs)  |  Speed: %d%%"),
+				Tas.CurrentFile()[0] ? Tas.CurrentFile() : BcLocalize("<sandbox>"),
+				Cur, (float)Cur / 50.0f, std::clamp(g_Config.m_BcTasRecordSpeed, 10, 100));
+		}
+		else
+		{
+			str_format(aInfo, sizeof(aInfo), BcLocalize("File: %s  |  Ticks: %d / %d (%.2fs)"),
+				Tas.CurrentFile()[0] ? Tas.CurrentFile() : BcLocalize("<none>"),
+				Cur, Tas.TotalTicks(), (float)Tas.TotalTicks() / 50.0f);
+		}
 		StatusText.HSplitTop(4.0f, nullptr, &StatusText);
 		Ui()->DoLabel(&StatusText, aInfo, 11.0f, TEXTALIGN_ML);
 
@@ -145,12 +158,13 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 			Tas.Clear();
 		}
 
-		// Checkpoint Row
-		CUIRect BtnSaveCp, BtnLoadCp;
-		CpRow.VSplitMid(&BtnSaveCp, &BtnLoadCp, 4.0f);
+		// Checkpoint & Rewind Row
+		CUIRect BtnSaveCp, BtnLoadCp, BtnRewind;
+		CpRow.VSplitMid(&BtnSaveCp, &BtnRewind, 4.0f);
+		BtnSaveCp.VSplitMid(&BtnSaveCp, &BtnLoadCp, 4.0f);
 
 		static CButtonContainer s_SaveCpBtn;
-		if(DoButton_Menu(&s_SaveCpBtn, BcLocalize("Save Checkpoint"), 0, &BtnSaveCp))
+		if(DoButton_Menu(&s_SaveCpBtn, BcLocalize("Save CP"), 0, &BtnSaveCp))
 		{
 			Tas.SaveCheckpoint();
 		}
@@ -158,14 +172,42 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		static CButtonContainer s_LoadCpBtn;
 		char aLoadCpText[64];
 		if(Tas.HasCheckpoint())
-			str_format(aLoadCpText, sizeof(aLoadCpText), "%s (%d)", BcLocalize("Load Checkpoint"), Tas.CheckpointTick());
+			str_format(aLoadCpText, sizeof(aLoadCpText), "%s (%d)", BcLocalize("Load CP"), Tas.CheckpointTick());
 		else
-			str_copy(aLoadCpText, BcLocalize("Load Checkpoint"));
+			str_copy(aLoadCpText, BcLocalize("Load CP"));
 
 		if(DoButton_Menu(&s_LoadCpBtn, aLoadCpText, 0, &BtnLoadCp))
 		{
 			Tas.LoadCheckpoint();
 		}
+
+		static CButtonContainer s_RewindBtn;
+		char aRewindText[64];
+		str_format(aRewindText, sizeof(aRewindText), "%s (%d)", BcLocalize("Rewind"), g_Config.m_BcTasRewindTicks);
+		if(DoButton_Menu(&s_RewindBtn, aRewindText, 0, &BtnRewind))
+		{
+			Tas.Rewind(g_Config.m_BcTasRewindTicks, false);
+		}
+
+		// Settings Box (Record Speed & Auto-Rewind)
+		SettingsBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 6.0f);
+		CUIRect SettingsContent;
+		SettingsBox.Margin(8.0f, &SettingsContent);
+
+		CUIRect RowSpeed, RowAutoRewind, RowRewindTicks;
+		SettingsContent.HSplitTop(20.0f, &RowSpeed, &SettingsContent);
+		SettingsContent.HSplitTop(4.0f, nullptr, &SettingsContent);
+		SettingsContent.HSplitTop(20.0f, &RowAutoRewind, &SettingsContent);
+		SettingsContent.HSplitTop(4.0f, nullptr, &SettingsContent);
+		SettingsContent.HSplitTop(20.0f, &RowRewindTicks, &SettingsContent);
+
+		Ui()->DoScrollbarOption(&g_Config.m_BcTasRecordSpeed, &g_Config.m_BcTasRecordSpeed, &RowSpeed, BcLocalize("Record speed"), 10, 100, &CUi::ms_LinearScrollbarScale, 0u, "%");
+
+		static CButtonContainer s_CbAutoRewind;
+		if(DoButton_CheckBox(&s_CbAutoRewind, BcLocalize("Auto-rewind on hitting hazard (death/freeze)"), g_Config.m_BcTasAutoRewind, &RowAutoRewind))
+			g_Config.m_BcTasAutoRewind ^= 1;
+
+		Ui()->DoScrollbarOption(&g_Config.m_BcTasRewindTicks, &g_Config.m_BcTasRewindTicks, &RowRewindTicks, BcLocalize("Hazard rewind ticks"), 5, 100, &CUi::ms_LinearScrollbarScale, 0u);
 
 		// Automation Box
 		AutomationBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 6.0f);
@@ -173,13 +215,13 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		AutomationBox.Margin(8.0f, &AutoContent);
 
 		CUIRect Row1, Row2, Row3, Row4;
-		AutoContent.HSplitTop(22.0f, &Row1, &AutoContent);
+		AutoContent.HSplitTop(20.0f, &Row1, &AutoContent);
 		AutoContent.HSplitTop(4.0f, nullptr, &AutoContent);
-		AutoContent.HSplitTop(22.0f, &Row2, &AutoContent);
+		AutoContent.HSplitTop(20.0f, &Row2, &AutoContent);
 		AutoContent.HSplitTop(4.0f, nullptr, &AutoContent);
-		AutoContent.HSplitTop(22.0f, &Row3, &AutoContent);
+		AutoContent.HSplitTop(20.0f, &Row3, &AutoContent);
 		AutoContent.HSplitTop(4.0f, nullptr, &AutoContent);
-		AutoContent.HSplitTop(22.0f, &Row4, &AutoContent);
+		AutoContent.HSplitTop(20.0f, &Row4, &AutoContent);
 
 		static CButtonContainer s_CbAutoStart;
 		if(DoButton_CheckBox(&s_CbAutoStart, BcLocalize("Auto-start playback on crossing race start line"), g_Config.m_BcTasAutoStart, &Row1))
@@ -320,7 +362,7 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 			"bind p tas_play_toggle",
 			"bind o tas_arm",
 			"bind i tas_record_toggle",
-			"bind f5 tas_save_cp; bind f6 tas_load_cp",
+			"bind f5 tas_save_cp; bind f6 tas_load_cp; bind f7 tas_rewind",
 		};
 		for(const char *pBind : apBinds)
 		{
