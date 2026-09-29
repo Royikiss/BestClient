@@ -59,7 +59,7 @@ void CTas::OnConsoleInit()
 	Console()->Register("tas_save", "s[name]", CFGFLAG_CLIENT, ConTasSave, this, "Save current TAS track to file (in tas/ directory)");
 	Console()->Register("tas_load", "s[name]", CFGFLAG_CLIENT, ConTasLoad, this, "Load TAS track from file (in tas/ directory)");
 	Console()->Register("tas_save_cp", "", CFGFLAG_CLIENT, ConTasSaveCheckpoint, this, "Save current recording checkpoint");
-	Console()->Register("tas_load_cp", "", CFGFLAG_CLIENT, ConTasLoadCheckpoint, this, "Roll back recording to last saved checkpoint");
+	Console()->Register("tas_load_cp", "?i[index]", CFGFLAG_CLIENT, ConTasLoadCheckpoint, this, "Roll back recording to checkpoint (1-based index, defaults to last)");
 	Console()->Register("tas_rewind", "?i[ticks]", CFGFLAG_CLIENT, ConTasRewind, this, "Rewind TAS recording and character physics by N ticks");
 	Console()->Register("tas_clear", "", CFGFLAG_CLIENT, ConTasClear, this, "Clear in-memory TAS track");
 	Console()->Register("tas_status", "", CFGFLAG_CLIENT, ConTasStatus, this, "Print current TAS status");
@@ -122,7 +122,7 @@ void CTas::StartRecord(bool ResetTrack)
 	{
 		m_vTicks.clear();
 		m_CurrentRecordTick = 0;
-		m_Checkpoint.m_Valid = false;
+		m_vCheckpoints.clear();
 	}
 
 	m_State = STATE_RECORDING;
@@ -243,12 +243,7 @@ void CTas::TogglePlayback()
 	if(m_State == STATE_PLAYING || m_State == STATE_ARMED)
 		StopPlayback();
 	else
-	{
-		if(g_Config.m_BcTasAutoStart)
-			ArmPlayback();
-		else
-			StartPlayback();
-	}
+		StartPlayback();
 }
 
 void CTas::SaveCheckpoint()
@@ -269,28 +264,31 @@ void CTas::SaveCheckpoint()
 		return;
 	}
 
-	m_Checkpoint.m_Valid = true;
-	m_Checkpoint.m_Tick = (int)m_vTicks.size();
-	m_Checkpoint.m_GameTick = Fp.PracticeWorld().GameTick();
-	m_Checkpoint.m_Pos = pLocalChar->Core()->m_Pos;
-	m_Checkpoint.m_Vel = pLocalChar->Core()->m_Vel;
-	m_Checkpoint.m_MainCore = pLocalChar->GetCore();
-	m_Checkpoint.m_MainFreezeTime = pLocalChar->m_FreezeTime;
+	STasCheckpoint Cp;
+	Cp.m_Valid = true;
+	Cp.m_Tick = (int)m_vTicks.size();
+	Cp.m_GameTick = Fp.PracticeWorld().GameTick();
+	Cp.m_Pos = pLocalChar->Core()->m_Pos;
+	Cp.m_Vel = pLocalChar->Core()->m_Vel;
+	Cp.m_MainCore = pLocalChar->GetCore();
+	Cp.m_MainFreezeTime = pLocalChar->m_FreezeTime;
 
 	CCharacter *pDummyChar = (DummyClientId >= 0) ? Fp.PracticeWorld().GetCharacterById(DummyClientId) : nullptr;
 	if(pDummyChar)
 	{
-		m_Checkpoint.m_DummyCore = pDummyChar->GetCore();
-		m_Checkpoint.m_DummyFreezeTime = pDummyChar->m_FreezeTime;
-		m_Checkpoint.m_HasDummy = true;
+		Cp.m_DummyCore = pDummyChar->GetCore();
+		Cp.m_DummyFreezeTime = pDummyChar->m_FreezeTime;
+		Cp.m_HasDummy = true;
 	}
 	else
 	{
-		m_Checkpoint.m_HasDummy = false;
+		Cp.m_HasDummy = false;
 	}
 
+	m_vCheckpoints.push_back(Cp);
+
 	char aBuf[128];
-	str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Checkpoint saved at tick %d."), m_Checkpoint.m_Tick);
+	str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Checkpoint #%d saved at tick %d."), (int)m_vCheckpoints.size(), Cp.m_Tick);
 	GameClient()->Echo(aBuf);
 }
 
@@ -373,9 +371,9 @@ void CTas::RestorePhysicalState(const CCharacterCore &MainCore, int MainFreezeTi
 	m_RecordTimeAccumulator = 0;
 }
 
-void CTas::LoadCheckpoint()
+void CTas::LoadCheckpoint(int Index)
 {
-	if(!m_Checkpoint.m_Valid)
+	if(m_vCheckpoints.empty())
 	{
 		GameClient()->Echo(BcLocalize("TAS: No checkpoint saved!"));
 		return;
@@ -386,20 +384,46 @@ void CTas::LoadCheckpoint()
 		return;
 	}
 
+	if(Index < 0 || Index >= (int)m_vCheckpoints.size())
+		Index = (int)m_vCheckpoints.size() - 1;
+
+	const STasCheckpoint &Cp = m_vCheckpoints[Index];
+	int TargetTick = std::clamp(Cp.m_Tick, 0, (int)m_vTicks.size());
+
 	m_WaterCrossing = false;
 	m_WaterCrossingStartTick = -1;
 
-	int TargetTick = std::clamp(m_Checkpoint.m_Tick, 0, (int)m_vTicks.size());
 	m_vTicks.resize(TargetTick);
 	m_CurrentRecordTick = TargetTick;
 
-	RestorePhysicalState(m_Checkpoint.m_MainCore, m_Checkpoint.m_MainFreezeTime,
-	                     m_Checkpoint.m_DummyCore, m_Checkpoint.m_DummyFreezeTime,
-	                     m_Checkpoint.m_GameTick);
+	RestorePhysicalState(Cp.m_MainCore, Cp.m_MainFreezeTime,
+	                     Cp.m_DummyCore, Cp.m_DummyFreezeTime,
+	                     Cp.m_GameTick);
+
+	// Prune any future checkpoints that were ahead of this tick
+	while(!m_vCheckpoints.empty() && m_vCheckpoints.back().m_Tick > TargetTick)
+	{
+		m_vCheckpoints.pop_back();
+	}
 
 	char aBuf[128];
-	str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Loaded checkpoint at tick %d."), TargetTick);
+	str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Loaded checkpoint #%d at tick %d."), Index + 1, TargetTick);
 	GameClient()->Echo(aBuf);
+}
+
+void CTas::DeleteCheckpoint(int Index)
+{
+	if(Index >= 0 && Index < (int)m_vCheckpoints.size())
+	{
+		m_vCheckpoints.erase(m_vCheckpoints.begin() + Index);
+		GameClient()->Echo(BcLocalize("TAS: Checkpoint deleted."));
+	}
+}
+
+void CTas::ClearCheckpoints()
+{
+	m_vCheckpoints.clear();
+	GameClient()->Echo(BcLocalize("TAS: Checkpoints cleared."));
 }
 
 void CTas::RollbackToTick(int TargetTick)
@@ -415,6 +439,7 @@ void CTas::RollbackToTick(int TargetTick)
 			                     m_InitialState.m_DummyCore, m_InitialState.m_DummyFreezeTime,
 			                     m_InitialState.m_GameTick);
 		}
+		m_vCheckpoints.clear();
 		return;
 	}
 
@@ -429,6 +454,7 @@ void CTas::RollbackToTick(int TargetTick)
 			                     m_InitialState.m_DummyCore, m_InitialState.m_DummyFreezeTime,
 			                     m_InitialState.m_GameTick);
 		}
+		m_vCheckpoints.clear();
 	}
 	else
 	{
@@ -438,6 +464,11 @@ void CTas::RollbackToTick(int TargetTick)
 		RestorePhysicalState(Snap.m_MainCore, Snap.m_MainFreezeTime,
 		                     Snap.m_DummyCore, Snap.m_DummyFreezeTime,
 		                     Snap.m_GameTick);
+
+		while(!m_vCheckpoints.empty() && m_vCheckpoints.back().m_Tick > TargetTick)
+		{
+			m_vCheckpoints.pop_back();
+		}
 	}
 
 	if(g_Config.m_SndGame && !GameClient()->m_SuppressEvents)
@@ -543,7 +574,7 @@ void CTas::Clear()
 	StopPlayback();
 	StopRecord();
 	m_vTicks.clear();
-	m_Checkpoint.m_Valid = false;
+	m_vCheckpoints.clear();
 	m_WaterCrossing = false;
 	m_WaterCrossingStartTick = -1;
 	m_aLoadedFileName[0] = '\0';
@@ -720,6 +751,102 @@ void CTas::DeleteTasFile(const char *pFilename)
 		GameClient()->Echo(aMsg);
 		RefreshFileList();
 	}
+}
+
+bool CTas::RenameTasFile(const char *pOldFilename, const char *pNewFilename)
+{
+	if(!pOldFilename || !pOldFilename[0] || !pNewFilename || !pNewFilename[0])
+		return false;
+
+	if(str_comp(pOldFilename, pNewFilename) == 0)
+		return true;
+
+	char aOldPath[256], aNewPath[256];
+	str_format(aOldPath, sizeof(aOldPath), "tas/%s.tas", pOldFilename);
+	str_format(aNewPath, sizeof(aNewPath), "tas/%s.tas", pNewFilename);
+
+	if(!Storage()->RenameFile(aOldPath, aNewPath, IStorage::TYPE_SAVE))
+	{
+		char aErr[128];
+		str_format(aErr, sizeof(aErr), BcLocalize("TAS: Failed to rename '%s' to '%s'!"), pOldFilename, pNewFilename);
+		GameClient()->Echo(aErr);
+		return false;
+	}
+
+	if(str_comp(m_aLoadedFileName, pOldFilename) == 0)
+		str_copy(m_aLoadedFileName, pNewFilename);
+
+	if(str_comp(g_Config.m_BcTasCurrentFile, pOldFilename) == 0)
+		str_copy(g_Config.m_BcTasCurrentFile, pNewFilename);
+
+	char aMsg[128];
+	str_format(aMsg, sizeof(aMsg), BcLocalize("TAS: Renamed track to '%s'."), pNewFilename);
+	GameClient()->Echo(aMsg);
+	RefreshFileList();
+	return true;
+}
+
+bool CTas::GetTasFileInfo(const char *pFilename, STasFileInfo *pInfo) const
+{
+	if(!pFilename || !pFilename[0] || !pInfo)
+		return false;
+
+	pInfo->m_Valid = false;
+	pInfo->m_aMap[0] = '\0';
+	pInfo->m_TotalTicks = 0;
+	pInfo->m_StartPos = vec2(0.0f, 0.0f);
+
+	char aPath[256];
+	str_format(aPath, sizeof(aPath), "tas/%s.tas", pFilename);
+
+	IOHANDLE File = Storage()->OpenFile(aPath, IOFLAG_READ, IStorage::TYPE_ALL);
+	if(!File)
+		return false;
+
+	CLineReader LineReader;
+	LineReader.OpenFile(File);
+
+	const char *pLine = LineReader.Get();
+	if(!pLine || str_comp_num(pLine, "# BESTCLIENT_TAS_V1", 19) != 0)
+	{
+		return false;
+	}
+
+	bool GotPos = false;
+	while((pLine = LineReader.Get()))
+	{
+		if(pLine[0] == '#' || pLine[0] == '\0')
+			continue;
+
+		if(str_comp_num(pLine, "MAP ", 4) == 0)
+		{
+			str_copy(pInfo->m_aMap, pLine + 4);
+		}
+		else if(str_comp_num(pLine, "TICKS ", 6) == 0)
+		{
+			pInfo->m_TotalTicks = str_toint(pLine + 6);
+		}
+		else if(pLine[0] == 'T' && pLine[1] == ' ' && !GotPos)
+		{
+			int DummyArr[18];
+			float PosX = 0.0f, PosY = 0.0f;
+			int ReadCount = std::sscanf(pLine,
+				"T %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %f %f",
+				&DummyArr[0], &DummyArr[1], &DummyArr[2], &DummyArr[3], &DummyArr[4],
+				&DummyArr[5], &DummyArr[6], &DummyArr[7], &DummyArr[8], &DummyArr[9],
+				&DummyArr[10], &DummyArr[11], &DummyArr[12], &DummyArr[13], &DummyArr[14],
+				&DummyArr[15], &DummyArr[16], &DummyArr[17], &PosX, &PosY);
+			if(ReadCount >= 20)
+			{
+				pInfo->m_StartPos = vec2(PosX, PosY);
+				GotPos = true;
+				break;
+			}
+		}
+	}
+
+	pInfo->m_Valid = true;
+	return true;
 }
 
 int CTas::OnSnapInput(int *pData, bool Dummy, bool Force)
@@ -1046,8 +1173,8 @@ void CTas::ConTasSaveCheckpoint(IConsole::IResult *pResult, void *pUserData)
 
 void CTas::ConTasLoadCheckpoint(IConsole::IResult *pResult, void *pUserData)
 {
-	(void)pResult;
-	static_cast<CTas *>(pUserData)->LoadCheckpoint();
+	int Index = pResult->NumArguments() > 0 ? pResult->GetInteger(0) - 1 : -1;
+	static_cast<CTas *>(pUserData)->LoadCheckpoint(Index);
 }
 
 void CTas::ConTasClear(IConsole::IResult *pResult, void *pUserData)
@@ -1075,7 +1202,7 @@ void CTas::ConTasStatus(IConsole::IResult *pResult, void *pUserData)
 		(float)pThis->m_vTicks.size() / 50.0f,
 		pThis->m_PlaybackTick,
 		pThis->m_aLoadedFileName[0] ? pThis->m_aLoadedFileName : BcLocalize("<none>"),
-		pThis->m_Checkpoint.m_Valid ? BcLocalize("Yes") : BcLocalize("No"),
+		pThis->HasCheckpoints() ? BcLocalize("Yes") : BcLocalize("No"),
 		pThis->m_WaterCrossing ? BcLocalize("Active") : BcLocalize("No"));
 	pThis->GameClient()->Echo(aBuf);
 }

@@ -2315,6 +2315,70 @@ Show in-game TAS status and progress HUD
 == 在游戏内显示 TAS 状态与进度 HUD
 
 [BestClient]
+Overwrite Name
+== 覆盖名称
+
+[BestClient]
+Checkpoints
+== 检查点
+
+[BestClient]
+Tick
+== 帧
+
+[BestClient]
+No checkpoints saved. Click 'Save CP' while recording.
+== 未保存检查点。录制时点击“保存检查点”添加。
+
+[BestClient]
+Track Details
+== 轨迹详情
+
+[BestClient]
+Map
+== 地图
+
+[BestClient]
+Start Pos
+== 起始坐标
+
+[BestClient]
+Length
+== 长度
+
+[BestClient]
+ticks
+== 帧
+
+[BestClient]
+No track selected (click a track in the list to view details)
+== 未选择轨迹 (在上方列表点击轨迹查看详情)
+
+[BestClient]
+TAS: Checkpoint #%d saved at tick %d.
+== TAS: 检查点 #%d 已保存于第 %d 帧。
+
+[BestClient]
+TAS: Loaded checkpoint #%d at tick %d.
+== TAS: 已读取检查点 #%d (第 %d 帧)。
+
+[BestClient]
+TAS: Checkpoint deleted.
+== TAS: 检查点已删除。
+
+[BestClient]
+TAS: Checkpoints cleared.
+== TAS: 检查点已清空。
+
+[BestClient]
+TAS: Renamed track to '%s'.
+== TAS: 已将轨迹重命名为 '%s'。
+
+[BestClient]
+TAS: Failed to rename '%s' to '%s'!
+== TAS: 重命名 '%s' 为 '%s' 失败！
+
+[BestClient]
 Save Run
 == 保存轨迹
 
@@ -2333,10 +2397,6 @@ Delete
 [BestClient]
 No .tas runs found. Record and save a run!
 == 未找到 .tas 轨迹文件。请先录制并保存！
-
-[BestClient]
-Quick Keybind Recommendations (type in F1 console):
-== 推荐快捷键绑定 (在 F1 控制台中输入):
 
 [BestClient]
 Fast Practice (Local Sandbox World)

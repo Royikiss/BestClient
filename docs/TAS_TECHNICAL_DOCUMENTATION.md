@@ -1,9 +1,9 @@
 # BestClient TAS (Tool-Assisted Speedrun) 技术架构与开发维护全景指南
 
 > **面向后续开发人员与 AI Agent 的完整技术规范**  
-> **文档版本**: 1.1.0  
+> **文档版本**: 1.2.0  
 > **适用代码分支**: `feature/tas`  
-> **最后更新**: 2026-09-28 (v1.1.0: 穿黑水模式、物理对齐4角碰撞、HUD模式区分、本地化同步构建系统)  
+> **最后更新**: 2026-09-29 (v1.2.0: 多检查点列表管理系统、轨迹详情展示与名称覆盖保存、移除起跑线就绪与自动起跑、图块坐标对齐、精简界面)  
 
 ---
 
@@ -59,7 +59,7 @@ BestClient TAS 采用了创新的 **“本地沙盒物理录制 + 云端精准�
 | :--- | :--- | :--- |
 | **TAS 核心组件** | `src/game/client/components/bestclient/tas.h`<br>`src/game/client/components/bestclient/tas.cpp` | 录制/回放状态机、输入捕获、减速步进控制、物理状态快照与还原、危险判定与自动回退、文件 I/O |
 | **本地练习沙盒** | `src/game/client/components/bestclient/fast_practice.h`<br>`src/game/client/components/bestclient/fast_practice.cpp` | 本地独立物理世界（`m_PracticeWorld`）、预测与渲染实体代理、中立输入构造 |
-| **TAS 界面组件** | `src/game/client/components/bestclient/menus_tas.cpp` | TAS& 独立配置菜单、状态指示器、录制速度滑块、危险回退配置、文件列表、推荐快捷键 |
+| **TAS 界面组件** | `src/game/client/components/bestclient/menus_tas.cpp` | TAS& 独立配置菜单、状态指示器、录制/回放控制、多检查点管理列表、轨迹详情展示与名称保存/覆盖 |
 | **配置变量定义** | `src/engine/shared/config_variables_bestclient.h` | 声明 `bc_tas_*` 相关持久化变量 |
 | **网络输入桥接** | `src/game/client/gameclient.cpp` | 在 `OnSnapInput` 与 `OnPredictTick` 拦截并路由用户输入 |
 | **多语言本地化** | `data/BestClient/languages/simplified_chinese.txt`<br>`data/BestClient/languages/russian.txt` | 界面与控制台通知多语言词条 |
@@ -193,6 +193,11 @@ int CTas::ConsumeSlowMoTicks()
    ```
 6. **重置减速时间累加器**：`m_RecordTimeAccumulator = 0;` 防止回退后发生时间突进。
 
+#### 多检查点列表管理系统 (Multi-Checkpoint System)
+1. **多快照存储 (`std::vector<STasCheckpoint> m_vCheckpoints`)**：录制过程中玩家可随时多次点击“保存检查点”，将当前物理状态追加到检查点列表中。
+2. **时间线一致性剪枝 (Timeline Pruning)**：当从某较早检查点读取还原或执行 `RollbackToTick` 时，系统自动裁剪列表中所有 `m_Tick > TargetTick` 的未来检查点，保证检查点历史记录与录制帧数严格单调对齐。
+3. **独立 UI 面板集成**：检查点功能独立为专属框，提供列表浏览（序号、帧数、秒数、坐标）、保存、读取选中项、删除单项，并支持双击快速读取。
+
 ---
 
 ### 3.4 危险障碍检测与自动回退 (Hazard Detection & Auto-Rewind)
@@ -318,7 +323,35 @@ bool CTas::IsHazard(const CCharacter *pChar) const
 
 ---
 
-### 3.7 数据结构规格定义
+### 3.7 轨迹元数据检索与图块坐标对齐 (Track Metadata & Tile Coordinates)
+#### 核心需求与设计
+当玩家在列表中选择某个已录制好的 TAS 轨迹时，界面需要实时向玩家展示该轨迹的**所属地图**、**起始出生坐标**以及**总帧数与时长**。
+* **低开销流式元数据解析 (`CTas::GetTasFileInfo`)**：
+  * 通过 `CLineReader` 打开文件，仅提取前几行（`MAP`、`TICKS` 以及第一帧 `T 0` 包含的起始位置数据），命中后立即退出循环，无需全量加载数兆字节的输入序列，解析耗时小于 0.1ms。
+  * **句柄管理规范**：`CLineReader::OpenFile(File)` 在底层 `io_read_all_str` 后会自动接管并执行 `io_close(File)`，调用方严禁再次显式调用 `io_close`，防止 double-close 引发 SIGABRT 崩溃。
+* **图块坐标系换算对齐**：
+  * DDNet 引擎底层物理实体（`m_Pos`）采用**底层物理像素 (World Pixels)** 记录；但游戏内 HUD、`/pos` 以及玩家常规认知是以 **32×32 图块 (Tiles)** 为基准。
+  * 在 UI 显示轨迹起始坐标以及检查点坐标时，系统将像素坐标统一除以 `32.0f`：
+    $$\text{Tile}_x = \frac{\text{Pixel}_x}{32.0}, \quad \text{Tile}_y = \frac{\text{Pixel}_y}{32.0}$$
+    例如底层物理坐标 `(5198.00, 6257.00)` 在界面中精准呈现为与游戏内一致的 `(162.44, 195.53)`。
+* **界面缓存优化**：在 UI 渲染层通过 `s_CachedFileName` 与 `s_CachedFileInfo` 维护当前选中项元数据，仅在用户切换选中条目时触发解析，杜绝高帧率渲染循环中的高频磁盘 I/O。
+
+---
+
+### 3.8 轨迹管理与保存/覆盖交互设计 (Track Selection & Overwrite Logic)
+针对此前输入框强行与单条轨迹双向绑定导致无法输入新名称的缺陷，全面重构了文件管理状态机：
+1. **默认未选中与独立输入**：
+   * 打开界面时默认 `s_SelectedFileIndex = -1`，输入框保持为空。
+   * 当未选中任何列表项时，右侧主操作按钮显示为**「保存轨迹」(Save Run)**。录制完毕后键入名称点击即可保存为全新的 `.tas` 文件并自动清空输入。
+2. **选中、反选与覆盖名称**：
+   * 单击列表中的轨迹项时，输入框自动填充为该文件名，右侧按钮切换为**「覆盖名称」(Overwrite Name)**，下方卡片展开展示其轨迹详情。
+   * 若再次点击当前已选中的列表项，触发反选（Deselect），恢复未选中空状态与「保存轨迹」按钮。
+   * 点击「覆盖名称」时：若名称未修改则以当前录制帧覆盖原有文件；若用户修改了输入框名称，则调用 `CTas::RenameTasFile` 自动重命名磁盘文件，并同步更新内部加载态与配置。
+3. **快速双击加载**：支持在轨迹列表以及检查点列表中双击直接加载。
+
+---
+
+### 3.9 数据结构规格定义
 
 #### `STasTick`（单帧录制数据）
 ```cpp
@@ -359,6 +392,17 @@ struct STasCheckpoint
 };
 ```
 
+#### `STasFileInfo`（轨迹文件元数据）
+```cpp
+struct STasFileInfo
+{
+    bool m_Valid;
+    char m_aMap[128];
+    int m_TotalTicks;
+    vec2 m_StartPos;
+};
+```
+
 ---
 
 ## 4. 文件持久化规范 (`.tas` 格式)
@@ -391,8 +435,8 @@ T 2 0 120 -50 0 1 1 0 0 0 0 0 0 0 0 0 0 0 361.00 812.10
   9. `Main.m_WantedWeapon` (int)
   10. `HasDummy` (0 或 1)
   11~18. `Dummy.*` (分身对应 8 项输入参数)
-  19. `PosX` (float，保留 2 位小数)
-  20. `PosY` (float，保留 2 位小数)
+  19. `PosX` (float，底层物理像素坐标，界面显示时除以 32.0 转换为图块坐标 Tile)
+  20. `PosY` (float，底层物理像素坐标，界面显示时除以 32.0 转换为图块坐标 Tile)
 
 ---
 
@@ -407,7 +451,6 @@ T 2 0 120 -50 0 1 1 0 0 0 0 0 0 0 0 0 0 0 361.00 812.10
 | `bc_tas_record_speed` | int | `100` | 10~100 | **录制速度百分比**（例：20 表示放慢 5 倍录制） |
 | `bc_tas_auto_rewind` | int | `1` | 0~1 | **碰危险自动回退开关**（黑水/冻结水/自杀块） |
 | `bc_tas_rewind_ticks` | int | `30` | 5~200 | **危险自动回退帧数**（默认 30 帧 = 0.6 秒） |
-| `bc_tas_auto_start` | int | `1` | 0~1 | 踩中起跑线时自动从第 0 帧开始回放 |
 | `bc_tas_auto_stop_on_input` | int | `1` | 0~1 | 手动按动 WASD/空格/鼠标时安全打断回放 |
 | `bc_tas_playback_dummy` | int | `1` | 0~1 | 若文件包含分身轨迹，是否同步回放分身 |
 | `bc_tas_show_hud` | int | `1` | 0~1 | 屏幕右上角显示 TAS 状态与进度 HUD |
@@ -423,8 +466,8 @@ T 2 0 120 -50 0 1 1 0 0 0 0 0 0 0 0 0 0 0 361.00 812.10
 | `tas_play_toggle` | - | 切换回放开关 |
 | `tas_arm` | - | 进入就绪态，等待穿过起跑线自动回放 |
 | `tas_stop` | - | 停止任何活动的录制或回放 |
-| `tas_save_cp` | - | 保存当前物理检查点 |
-| `tas_load_cp` | - | 读取检查点并瞬移还原物理姿态 |
+| `tas_save_cp` | - | 保存当前物理检查点快照至列表 |
+| `tas_load_cp` | `?i[index]` | 读取检查点并瞬移还原物理姿态（1 开始索引，缺省读取最近一个） |
 | `tas_rewind` | `?i[ticks]` | 手动回退指定帧数（缺省使用配置值） |
 | `tas_save` | `s[name]` | 保存当前录制轨迹至 `tas/<name>.tas` |
 | `tas_load` | `s[name]` | 从 `tas/<name>.tas` 加载轨迹到内存 |

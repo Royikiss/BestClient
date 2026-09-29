@@ -597,7 +597,6 @@ MACRO_CONFIG_INT(BcAmbientDustAmount, bc_ambient_dust_amount, 100, 25, 200, CFGF
 
 // TAS&
 MACRO_CONFIG_INT(BcTasEnabled, bc_tas_enabled, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable TAS system")
-MACRO_CONFIG_INT(BcTasAutoStart, bc_tas_auto_start, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically start TAS playback when crossing race start line")
 MACRO_CONFIG_INT(BcTasPlaybackDummy, bc_tas_playback_dummy, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Play dummy inputs if available in TAS file")
 MACRO_CONFIG_INT(BcTasAutoStopOnInput, bc_tas_auto_stop_on_input, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Stop TAS playback on manual mouse/keyboard input")
 MACRO_CONFIG_INT(BcTasShowHud, bc_tas_show_hud, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show TAS status overlay HUD on screen")

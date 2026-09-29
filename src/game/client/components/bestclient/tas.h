@@ -61,6 +61,14 @@ public:
 		bool m_HasDummy = false;
 	};
 
+	struct STasFileInfo
+	{
+		bool m_Valid = false;
+		char m_aMap[128] = "";
+		int m_TotalTicks = 0;
+		vec2 m_StartPos = vec2(0.0f, 0.0f);
+	};
+
 	int Sizeof() const override { return sizeof(*this); }
 
 	void OnConsoleInit() override;
@@ -80,7 +88,9 @@ public:
 	void TogglePlayback();
 
 	void SaveCheckpoint();
-	void LoadCheckpoint();
+	void LoadCheckpoint(int Index = -1);
+	void DeleteCheckpoint(int Index);
+	void ClearCheckpoints();
 	void Rewind(int NumTicks, bool IsAutoHazard = false);
 	void RollbackToTick(int TargetTick);
 	void ToggleWaterCrossing();
@@ -88,8 +98,10 @@ public:
 
 	bool SaveToFile(const char *pFilename);
 	bool LoadFromFile(const char *pFilename);
+	bool RenameTasFile(const char *pOldFilename, const char *pNewFilename);
 	void DeleteTasFile(const char *pFilename);
 	void RefreshFileList();
+	bool GetTasFileInfo(const char *pFilename, STasFileInfo *pInfo) const;
 
 	int OnSnapInput(int *pData, bool Dummy, bool Force);
 	void OnRecordInput(const int *pData, bool Dummy);
@@ -115,14 +127,15 @@ public:
 	int TotalTicks() const { return (int)m_vTicks.size(); }
 	const std::vector<std::string> &FileList() const { return m_vFileList; }
 	const char *CurrentFile() const { return m_aLoadedFileName; }
-	bool HasCheckpoint() const { return m_Checkpoint.m_Valid; }
-	int CheckpointTick() const { return m_Checkpoint.m_Tick; }
+	bool HasCheckpoints() const { return !m_vCheckpoints.empty(); }
+	int CheckpointCount() const { return (int)m_vCheckpoints.size(); }
+	const std::vector<STasCheckpoint> &Checkpoints() const { return m_vCheckpoints; }
 	const std::vector<STasTick> &Ticks() const { return m_vTicks; }
 
 private:
 	ETasState m_State = STATE_IDLE;
 	std::vector<STasTick> m_vTicks;
-	STasCheckpoint m_Checkpoint;
+	std::vector<STasCheckpoint> m_vCheckpoints;
 	STasCheckpoint m_InitialState;
 
 	int m_PlaybackTick = 0;

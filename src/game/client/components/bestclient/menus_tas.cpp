@@ -29,21 +29,22 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 	CUIRect LeftColumn, RightColumn;
 	MainView.VSplitMid(&LeftColumn, &RightColumn, 14.0f);
 
-	// LEFT COLUMN: Controls, Automation, Status
+	// LEFT COLUMN: Status, Controls, Checkpoints, Settings, Automation
 	{
-		// 1. Status Block
-		// 1. Status Block
-		CUIRect StatusBox, ControlBox, SettingsBox, AutomationBox;
+		CUIRect StatusBox, ControlBox, CpBox, SettingsBox, AutomationBox;
 		LeftColumn.HSplitTop(68.0f, &StatusBox, &LeftColumn);
 		LeftColumn.HSplitTop(6.0f, nullptr, &LeftColumn);
 
-		LeftColumn.HSplitTop(136.0f, &ControlBox, &LeftColumn);
+		LeftColumn.HSplitTop(106.0f, &ControlBox, &LeftColumn);
+		LeftColumn.HSplitTop(6.0f, nullptr, &LeftColumn);
+
+		LeftColumn.HSplitTop(140.0f, &CpBox, &LeftColumn);
 		LeftColumn.HSplitTop(6.0f, nullptr, &LeftColumn);
 
 		LeftColumn.HSplitTop(84.0f, &SettingsBox, &LeftColumn);
 		LeftColumn.HSplitTop(6.0f, nullptr, &LeftColumn);
 
-		LeftColumn.HSplitTop(104.0f, &AutomationBox, &LeftColumn);
+		LeftColumn.HSplitTop(78.0f, &AutomationBox, &LeftColumn);
 
 		// Render Status
 		StatusBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 6.0f);
@@ -70,11 +71,6 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		{
 			BadgeCol = ColorRGBA(0.25f, 0.95f, 0.40f, 1.0f);
 			pStateStr = BcLocalize("PLAYING");
-		}
-		else if(Tas.IsArmed())
-		{
-			BadgeCol = ColorRGBA(0.95f, 0.85f, 0.25f, 1.0f);
-			pStateStr = BcLocalize("ARMED (WAITING START LINE)");
 		}
 
 		CUIRect BadgeRect;
@@ -115,28 +111,17 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		CUIRect CtrlContent;
 		ControlBox.Margin(8.0f, &CtrlContent);
 
-		CUIRect PlayRow, RecRow, CpRow, CrossRow;
+		CUIRect PlayRow, RecRow, CrossRow;
 		CtrlContent.HSplitTop(25.0f, &PlayRow, &CtrlContent);
 		CtrlContent.HSplitTop(5.0f, nullptr, &CtrlContent);
 		CtrlContent.HSplitTop(25.0f, &RecRow, &CtrlContent);
 		CtrlContent.HSplitTop(5.0f, nullptr, &CtrlContent);
-		CtrlContent.HSplitTop(25.0f, &CpRow, &CtrlContent);
-		CtrlContent.HSplitTop(5.0f, nullptr, &CtrlContent);
 		CtrlContent.HSplitTop(25.0f, &CrossRow, &CtrlContent);
 
-		// Play Row
-		CUIRect BtnArm, BtnPlay, BtnStop;
-		PlayRow.VSplitMid(&BtnArm, &BtnStop, 4.0f);
-		BtnArm.VSplitMid(&BtnArm, &BtnPlay, 4.0f);
-
-		static CButtonContainer s_ArmBtn;
-		if(DoButton_Menu(&s_ArmBtn, BcLocalize("Arm (Race)"), Tas.IsArmed() ? 1 : 0, &BtnArm))
-		{
-			if(Tas.IsArmed())
-				Tas.StopPlayback();
-			else
-				Tas.ArmPlayback();
-		}
+		// Play Row: Play, Stop, Clear Track (Arm button removed!)
+		CUIRect BtnPlay, BtnStop, BtnClear;
+		PlayRow.VSplitMid(&BtnPlay, &BtnClear, 4.0f);
+		BtnPlay.VSplitMid(&BtnPlay, &BtnStop, 4.0f);
 
 		static CButtonContainer s_PlayBtn;
 		if(DoButton_Menu(&s_PlayBtn, BcLocalize("Play Now"), Tas.IsPlaybackActive() ? 1 : 0, &BtnPlay))
@@ -154,9 +139,15 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 			Tas.StopRecord();
 		}
 
-		// Rec Row
-		CUIRect BtnRec, BtnStopRec, BtnClear;
-		RecRow.VSplitMid(&BtnRec, &BtnClear, 4.0f);
+		static CButtonContainer s_ClearBtn;
+		if(DoButton_Menu(&s_ClearBtn, BcLocalize("Clear Track"), 0, &BtnClear))
+		{
+			Tas.Clear();
+		}
+
+		// Rec Row: Record, Stop Rec, Rewind
+		CUIRect BtnRec, BtnStopRec, BtnRewind;
+		RecRow.VSplitMid(&BtnRec, &BtnRewind, 4.0f);
 		BtnRec.VSplitMid(&BtnRec, &BtnStopRec, 4.0f);
 
 		static CButtonContainer s_RecBtn;
@@ -169,35 +160,6 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 		if(DoButton_Menu(&s_StopRecBtn, BcLocalize("Stop Rec"), 0, &BtnStopRec))
 		{
 			Tas.StopRecord();
-		}
-
-		static CButtonContainer s_ClearBtn;
-		if(DoButton_Menu(&s_ClearBtn, BcLocalize("Clear Track"), 0, &BtnClear))
-		{
-			Tas.Clear();
-		}
-
-		// Checkpoint & Rewind Row
-		CUIRect BtnSaveCp, BtnLoadCp, BtnRewind;
-		CpRow.VSplitMid(&BtnSaveCp, &BtnRewind, 4.0f);
-		BtnSaveCp.VSplitMid(&BtnSaveCp, &BtnLoadCp, 4.0f);
-
-		static CButtonContainer s_SaveCpBtn;
-		if(DoButton_Menu(&s_SaveCpBtn, BcLocalize("Save CP"), 0, &BtnSaveCp))
-		{
-			Tas.SaveCheckpoint();
-		}
-
-		static CButtonContainer s_LoadCpBtn;
-		char aLoadCpText[64];
-		if(Tas.HasCheckpoint())
-			str_format(aLoadCpText, sizeof(aLoadCpText), "%s (%d)", BcLocalize("Load CP"), Tas.CheckpointTick());
-		else
-			str_copy(aLoadCpText, BcLocalize("Load CP"));
-
-		if(DoButton_Menu(&s_LoadCpBtn, aLoadCpText, 0, &BtnLoadCp))
-		{
-			Tas.LoadCheckpoint();
 		}
 
 		static CButtonContainer s_RewindBtn;
@@ -221,6 +183,92 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 			Tas.ToggleWaterCrossing();
 		}
 
+		// Checkpoints Box (New dedicated box!)
+		CpBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 6.0f);
+		CUIRect CpContent;
+		CpBox.Margin(8.0f, &CpContent);
+
+		CUIRect CpTitle, CpListRect, CpBtnRow;
+		CpContent.HSplitTop(18.0f, &CpTitle, &CpContent);
+		CpContent.HSplitTop(4.0f, nullptr, &CpContent);
+		CpContent.HSplitBottom(25.0f, &CpListRect, &CpBtnRow);
+		CpListRect.HSplitBottom(5.0f, &CpListRect, nullptr);
+
+		char aCpHeader[64];
+		str_format(aCpHeader, sizeof(aCpHeader), "%s (%d)", BcLocalize("Checkpoints"), Tas.CheckpointCount());
+		Ui()->DoLabel(&CpTitle, aCpHeader, 12.0f, TEXTALIGN_ML);
+
+		const auto &vCheckpoints = Tas.Checkpoints();
+		static int s_SelectedCpIndex = -1;
+		static CListBox s_CpListBox;
+
+		if(s_SelectedCpIndex >= (int)vCheckpoints.size())
+			s_SelectedCpIndex = (int)vCheckpoints.size() - 1;
+
+		s_CpListBox.DoStart(18.0f, (int)vCheckpoints.size(), 1, 3, s_SelectedCpIndex, &CpListRect, true, IGraphics::CORNER_ALL, false);
+		for(size_t i = 0; i < vCheckpoints.size(); ++i)
+		{
+			const auto &Cp = vCheckpoints[i];
+			const CListboxItem Item = s_CpListBox.DoNextItem(&vCheckpoints[i], (int)i == s_SelectedCpIndex);
+			if(!Item.m_Visible)
+				continue;
+
+			char aItemText[96];
+			str_format(aItemText, sizeof(aItemText), "#%d | %s %d (%.2fs) | (%.2f, %.2f)",
+				(int)i + 1, BcLocalize("Tick"), Cp.m_Tick, (float)Cp.m_Tick / 50.0f, Cp.m_Pos.x / 32.0f, Cp.m_Pos.y / 32.0f);
+			Ui()->DoLabel(&Item.m_Rect, aItemText, 11.0f, TEXTALIGN_ML);
+		}
+		const int NewCpSelected = s_CpListBox.DoEnd();
+		if(s_CpListBox.WasItemSelected() && NewCpSelected >= 0 && NewCpSelected < (int)vCheckpoints.size())
+		{
+			s_SelectedCpIndex = NewCpSelected;
+		}
+		if(s_CpListBox.WasItemActivated())
+		{
+			if(s_SelectedCpIndex >= 0 && s_SelectedCpIndex < (int)vCheckpoints.size())
+				Tas.LoadCheckpoint(s_SelectedCpIndex);
+		}
+
+		if(vCheckpoints.empty())
+		{
+			CUIRect EmptyLabelRect = CpListRect;
+			EmptyLabelRect.Margin(6.0f, &EmptyLabelRect);
+			TextRender()->TextColor(0.6f, 0.6f, 0.6f, 0.8f);
+			Ui()->DoLabel(&EmptyLabelRect, BcLocalize("No checkpoints saved. Click 'Save CP' while recording."), 10.0f, TEXTALIGN_MC);
+			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		}
+
+		// Checkpoint action buttons: Save CP, Load CP, Delete
+		CUIRect BtnSaveCp, BtnLoadCp, BtnDeleteCp;
+		CpBtnRow.VSplitMid(&BtnSaveCp, &BtnDeleteCp, 4.0f);
+		BtnSaveCp.VSplitMid(&BtnSaveCp, &BtnLoadCp, 4.0f);
+
+		static CButtonContainer s_SaveCpBtn;
+		if(DoButton_Menu(&s_SaveCpBtn, BcLocalize("Save CP"), 0, &BtnSaveCp))
+		{
+			Tas.SaveCheckpoint();
+			s_SelectedCpIndex = Tas.CheckpointCount() - 1;
+		}
+
+		static CButtonContainer s_LoadCpBtn;
+		if(DoButton_Menu(&s_LoadCpBtn, BcLocalize("Load CP"), 0, &BtnLoadCp))
+		{
+			if(s_SelectedCpIndex >= 0 && s_SelectedCpIndex < (int)vCheckpoints.size())
+				Tas.LoadCheckpoint(s_SelectedCpIndex);
+			else
+				Tas.LoadCheckpoint();
+		}
+
+		static CButtonContainer s_DeleteCpBtn;
+		if(DoButton_Menu(&s_DeleteCpBtn, BcLocalize("Delete"), 0, &BtnDeleteCp))
+		{
+			if(s_SelectedCpIndex >= 0 && s_SelectedCpIndex < (int)vCheckpoints.size())
+			{
+				Tas.DeleteCheckpoint(s_SelectedCpIndex);
+				s_SelectedCpIndex = -1;
+			}
+		}
+
 		// Settings Box (Record Speed & Auto-Rewind)
 		SettingsBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 6.0f);
 		CUIRect SettingsContent;
@@ -241,81 +289,99 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 
 		Ui()->DoScrollbarOption(&g_Config.m_BcTasRewindTicks, &g_Config.m_BcTasRewindTicks, &RowRewindTicks, BcLocalize("Hazard rewind ticks"), 5, 100, &CUi::ms_LinearScrollbarScale, 0u);
 
-		// Automation Box
+		// Automation Box (Auto-start crossing race line removed!)
 		AutomationBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 6.0f);
 		CUIRect AutoContent;
 		AutomationBox.Margin(8.0f, &AutoContent);
 
-		CUIRect Row1, Row2, Row3, Row4;
+		CUIRect Row1, Row2, Row3;
 		AutoContent.HSplitTop(20.0f, &Row1, &AutoContent);
 		AutoContent.HSplitTop(4.0f, nullptr, &AutoContent);
 		AutoContent.HSplitTop(20.0f, &Row2, &AutoContent);
 		AutoContent.HSplitTop(4.0f, nullptr, &AutoContent);
 		AutoContent.HSplitTop(20.0f, &Row3, &AutoContent);
-		AutoContent.HSplitTop(4.0f, nullptr, &AutoContent);
-		AutoContent.HSplitTop(20.0f, &Row4, &AutoContent);
-
-		static CButtonContainer s_CbAutoStart;
-		if(DoButton_CheckBox(&s_CbAutoStart, BcLocalize("Auto-start playback on crossing race start line"), g_Config.m_BcTasAutoStart, &Row1))
-			g_Config.m_BcTasAutoStart ^= 1;
 
 		static CButtonContainer s_CbDummy;
-		if(DoButton_CheckBox(&s_CbDummy, BcLocalize("Play Dummy input if available in TAS file"), g_Config.m_BcTasPlaybackDummy, &Row2))
+		if(DoButton_CheckBox(&s_CbDummy, BcLocalize("Play Dummy input if available in TAS file"), g_Config.m_BcTasPlaybackDummy, &Row1))
 			g_Config.m_BcTasPlaybackDummy ^= 1;
 
 		static CButtonContainer s_CbStopOnInput;
-		if(DoButton_CheckBox(&s_CbStopOnInput, BcLocalize("Abort playback upon manual mouse/keyboard action"), g_Config.m_BcTasAutoStopOnInput, &Row3))
+		if(DoButton_CheckBox(&s_CbStopOnInput, BcLocalize("Abort playback upon manual mouse/keyboard action"), g_Config.m_BcTasAutoStopOnInput, &Row2))
 			g_Config.m_BcTasAutoStopOnInput ^= 1;
 
 		static CButtonContainer s_CbShowHud;
-		if(DoButton_CheckBox(&s_CbShowHud, BcLocalize("Show in-game TAS status and progress HUD"), g_Config.m_BcTasShowHud, &Row4))
+		if(DoButton_CheckBox(&s_CbShowHud, BcLocalize("Show in-game TAS status and progress HUD"), g_Config.m_BcTasShowHud, &Row3))
 			g_Config.m_BcTasShowHud ^= 1;
 	}
 
-	// RIGHT COLUMN: File Management & Quick Reference
+	// RIGHT COLUMN: File Management & Track Details (Keybinds removed!)
 	{
-		CUIRect SaveRow, ListRect, ListBtnRow, KeybindBox;
+		CUIRect SaveRow, ListRect, ListBtnRow, TrackInfoBox;
 		RightColumn.HSplitTop(26.0f, &SaveRow, &RightColumn);
 		RightColumn.HSplitTop(6.0f, nullptr, &RightColumn);
 
-		RightColumn.HSplitTop(186.0f, &ListRect, &RightColumn);
+		RightColumn.HSplitTop(210.0f, &ListRect, &RightColumn);
 		RightColumn.HSplitTop(6.0f, nullptr, &RightColumn);
 
 		RightColumn.HSplitTop(26.0f, &ListBtnRow, &RightColumn);
 		RightColumn.HSplitTop(8.0f, nullptr, &RightColumn);
 
-		RightColumn.HSplitTop(128.0f, &KeybindBox, &RightColumn);
+		RightColumn.HSplitTop(110.0f, &TrackInfoBox, &RightColumn);
 
-		// Save row: Editbox + Save button
+		const auto &vFiles = Tas.FileList();
+		static int s_SelectedFileIndex = -1;
+		static CListBox s_FileListBox;
 		static CLineInputBuffered<128> s_SaveFileNameInput;
-		if(s_SaveFileNameInput.IsEmpty() && g_Config.m_BcTasCurrentFile[0])
-			s_SaveFileNameInput.Set(g_Config.m_BcTasCurrentFile);
 
+		if(s_SelectedFileIndex >= (int)vFiles.size())
+		{
+			s_SelectedFileIndex = -1;
+		}
+
+		// Save row: Editbox + Button ("Save Run" when none selected, "Overwrite Name" when selected)
 		CUIRect EditBoxRect, SaveBtnRect;
-		SaveRow.VSplitRight(90.0f, &EditBoxRect, &SaveBtnRect);
+		SaveRow.VSplitRight(100.0f, &EditBoxRect, &SaveBtnRect);
 		EditBoxRect.VSplitRight(6.0f, &EditBoxRect, nullptr);
 
 		Ui()->DoEditBox(&s_SaveFileNameInput, &EditBoxRect, 12.0f);
 
+		const bool HasSelectedTrack = (s_SelectedFileIndex >= 0 && s_SelectedFileIndex < (int)vFiles.size());
+		const char *pBtnLabel = HasSelectedTrack ? BcLocalize("Overwrite Name") : BcLocalize("Save Run");
+
 		static CButtonContainer s_SaveFileBtn;
-		if(DoButton_Menu(&s_SaveFileBtn, BcLocalize("Save Run"), 0, &SaveBtnRect))
+		if(DoButton_Menu(&s_SaveFileBtn, pBtnLabel, 0, &SaveBtnRect))
 		{
 			const char *pName = s_SaveFileNameInput.GetString();
 			if(pName && pName[0])
 			{
-				Tas.SaveToFile(pName);
-				str_copy(g_Config.m_BcTasCurrentFile, pName);
+				if(HasSelectedTrack)
+				{
+					const std::string OldName = vFiles[s_SelectedFileIndex];
+					if(str_comp(OldName.c_str(), pName) == 0)
+					{
+						Tas.SaveToFile(OldName.c_str());
+					}
+					else
+					{
+						if(Tas.RenameTasFile(OldName.c_str(), pName))
+						{
+							if(!Tas.Ticks().empty() && str_comp(Tas.CurrentFile(), pName) == 0)
+								Tas.SaveToFile(pName);
+						}
+					}
+				}
+				else
+				{
+					if(Tas.SaveToFile(pName))
+					{
+						s_SaveFileNameInput.Clear();
+						s_SelectedFileIndex = -1;
+					}
+				}
 			}
 		}
 
 		// File Listbox
-		const auto &vFiles = Tas.FileList();
-		static int s_SelectedFileIndex = -1;
-		static CListBox s_FileListBox;
-
-		if(s_SelectedFileIndex >= (int)vFiles.size())
-			s_SelectedFileIndex = -1;
-
 		ListRect.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 6.0f);
 		CUIRect InnerList;
 		ListRect.Margin(4.0f, &InnerList);
@@ -337,10 +403,24 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 				TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 		}
 		const int NewSelected = s_FileListBox.DoEnd();
-		if(NewSelected >= 0 && NewSelected < (int)vFiles.size())
+		if(s_FileListBox.WasItemSelected())
 		{
-			s_SelectedFileIndex = NewSelected;
-			s_SaveFileNameInput.Set(vFiles[s_SelectedFileIndex].c_str());
+			if(NewSelected == s_SelectedFileIndex)
+			{
+				// Clicking the currently selected item again toggles off selection
+				s_SelectedFileIndex = -1;
+				s_SaveFileNameInput.Clear();
+			}
+			else if(NewSelected >= 0 && NewSelected < (int)vFiles.size())
+			{
+				s_SelectedFileIndex = NewSelected;
+				s_SaveFileNameInput.Set(vFiles[s_SelectedFileIndex].c_str());
+			}
+		}
+		if(s_FileListBox.WasItemActivated())
+		{
+			if(s_SelectedFileIndex >= 0 && s_SelectedFileIndex < (int)vFiles.size())
+				Tas.LoadFromFile(vFiles[s_SelectedFileIndex].c_str());
 		}
 
 		if(vFiles.empty())
@@ -379,32 +459,60 @@ void CMenus::RenderSettingsTas(CUIRect MainView)
 			{
 				Tas.DeleteTasFile(vFiles[s_SelectedFileIndex].c_str());
 				s_SelectedFileIndex = -1;
+				s_SaveFileNameInput.Clear();
 			}
 		}
 
-		// Keybind Reference Box
-		KeybindBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.20f), IGraphics::CORNER_ALL, 6.0f);
-		CUIRect KeybindContent;
-		KeybindBox.Margin(6.0f, &KeybindContent);
+		// Track Info Box (Displays map, start coords, and total ticks for selected track)
+		TrackInfoBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 6.0f);
+		CUIRect InfoContent;
+		TrackInfoBox.Margin(8.0f, &InfoContent);
 
-		Ui()->DoLabel(&KeybindContent, BcLocalize("Quick Keybind Recommendations (type in F1 console):"), 11.0f, TEXTALIGN_TL);
-		KeybindContent.HSplitTop(18.0f, nullptr, &KeybindContent);
+		static CTas::STasFileInfo s_CachedFileInfo{};
+		static std::string s_CachedFileName;
 
-		const char *apBinds[] = {
-			"bind p tas_play_toggle",
-			"bind o tas_arm",
-			"bind i tas_record_toggle",
-			"bind f5 tas_save_cp; bind f6 tas_load_cp; bind f7 tas_rewind",
-			"bind f8 tas_cross_water_toggle",
-		};
-		for(const char *pBind : apBinds)
+		if(s_SelectedFileIndex >= 0 && s_SelectedFileIndex < (int)vFiles.size())
 		{
-			CUIRect Line;
-			KeybindContent.HSplitTop(15.0f, &Line, &KeybindContent);
-			TextRender()->TextColor(0.8f, 0.8f, 0.5f, 1.0f);
-			Ui()->DoLabel(&Line, pBind, 11.0f, TEXTALIGN_ML);
+			if(s_CachedFileName != vFiles[s_SelectedFileIndex])
+			{
+				s_CachedFileName = vFiles[s_SelectedFileIndex];
+				Tas.GetTasFileInfo(s_CachedFileName.c_str(), &s_CachedFileInfo);
+			}
+			const CTas::STasFileInfo &Info = s_CachedFileInfo;
+
+			CUIRect RowTitle, RowMap, RowPos, RowTicks;
+			InfoContent.HSplitTop(18.0f, &RowTitle, &InfoContent);
+			InfoContent.HSplitTop(2.0f, nullptr, &InfoContent);
+			InfoContent.HSplitTop(16.0f, &RowMap, &InfoContent);
+			InfoContent.HSplitTop(2.0f, nullptr, &InfoContent);
+			InfoContent.HSplitTop(16.0f, &RowPos, &InfoContent);
+			InfoContent.HSplitTop(2.0f, nullptr, &InfoContent);
+			InfoContent.HSplitTop(16.0f, &RowTicks, &InfoContent);
+
+			char aTitle[128];
+			str_format(aTitle, sizeof(aTitle), "%s: %s", BcLocalize("Track Details"), vFiles[s_SelectedFileIndex].c_str());
+			TextRender()->TextColor(0.4f, 0.9f, 1.0f, 1.0f);
+			Ui()->DoLabel(&RowTitle, aTitle, 12.0f, TEXTALIGN_ML);
+			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+
+			char aMap[128];
+			str_format(aMap, sizeof(aMap), "%s: %s", BcLocalize("Map"), Info.m_aMap[0] ? Info.m_aMap : BcLocalize("unknown"));
+			Ui()->DoLabel(&RowMap, aMap, 11.0f, TEXTALIGN_ML);
+
+			char aPos[128];
+			str_format(aPos, sizeof(aPos), "%s: (%.2f, %.2f)", BcLocalize("Start Pos"), Info.m_StartPos.x / 32.0f, Info.m_StartPos.y / 32.0f);
+			Ui()->DoLabel(&RowPos, aPos, 11.0f, TEXTALIGN_ML);
+
+			char aTicks[128];
+			str_format(aTicks, sizeof(aTicks), "%s: %d %s (%.2f%s)", BcLocalize("Length"), Info.m_TotalTicks, BcLocalize("ticks"), (float)Info.m_TotalTicks / 50.0f, BcLocalize("s"));
+			Ui()->DoLabel(&RowTicks, aTicks, 11.0f, TEXTALIGN_ML);
 		}
-		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		else
+		{
+			TextRender()->TextColor(0.6f, 0.6f, 0.6f, 0.8f);
+			Ui()->DoLabel(&InfoContent, BcLocalize("No track selected (click a track in the list to view details)"), 11.0f, TEXTALIGN_MC);
+			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		}
 	}
 }
 

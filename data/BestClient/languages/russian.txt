@@ -2315,6 +2315,70 @@ Show in-game TAS status and progress HUD
 == Показывать внутриигровой HUD TAS
 
 [BestClient]
+Overwrite Name
+== Перезаписать имя
+
+[BestClient]
+Checkpoints
+== Контрольные точки
+
+[BestClient]
+Tick
+== Тик
+
+[BestClient]
+No checkpoints saved. Click 'Save CP' while recording.
+== Нет точек. Нажмите «Сохранить КТ» во время записи.
+
+[BestClient]
+Track Details
+== Детали трека
+
+[BestClient]
+Map
+== Карта
+
+[BestClient]
+Start Pos
+== Начальная поз.
+
+[BestClient]
+Length
+== Длина
+
+[BestClient]
+ticks
+== тиков
+
+[BestClient]
+No track selected (click a track in the list to view details)
+== Трек не выбран (выберите трек в списке)
+
+[BestClient]
+TAS: Checkpoint #%d saved at tick %d.
+== TAS: КТ #%d сохранена на тике %d.
+
+[BestClient]
+TAS: Loaded checkpoint #%d at tick %d.
+== TAS: Загружена КТ #%d на тике %d.
+
+[BestClient]
+TAS: Checkpoint deleted.
+== TAS: КТ удалена.
+
+[BestClient]
+TAS: Checkpoints cleared.
+== TAS: КТ очищены.
+
+[BestClient]
+TAS: Renamed track to '%s'.
+== TAS: Трек переименован в '%s'.
+
+[BestClient]
+TAS: Failed to rename '%s' to '%s'!
+== TAS: Не удалось переименовать '%s' в '%s'!
+
+[BestClient]
 Save Run
 == Сохранить
 
@@ -2333,10 +2397,6 @@ Delete
 [BestClient]
 No .tas runs found. Record and save a run!
 == TAS-файлы не найдены. Запишите и сохраните!
-
-[BestClient]
-Quick Keybind Recommendations (type in F1 console):
-== Рекомендуемые бинды (вводить в консоль F1):
 
 [BestClient]
 Fast Practice (Local Sandbox World)
