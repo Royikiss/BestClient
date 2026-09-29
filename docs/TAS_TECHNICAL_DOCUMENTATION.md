@@ -1,9 +1,9 @@
 # BestClient TAS (Tool-Assisted Speedrun) 技术架构与开发维护全景指南
 
 > **面向后续开发人员与 AI Agent 的完整技术规范**  
-> **文档版本**: 1.3.0  
+> **文档版本**: 1.3.1  
 > **适用代码分支**: `feature/tas`  
-> **最后更新**: 2026-09-29 (v1.3.0: 本体与分身双角色交互深度优化、开火隔离与假Tee挥锤动画同步、录制开局零卡顿瞬时预测、DF/HDF按键绑定录制与智能转向瞄准同步体系)  
+> **最后更新**: 2026-09-29 (v1.3.1: 修复分身挥锤时误注入自动位移的重大缺陷、物理装填零延迟开火、确立核心开发红线准则)  
 
 ---
 
@@ -563,6 +563,21 @@ struct STasFileInfo
    GameClient()->m_HammerInput = Tick.m_DummyInput;
    ```
    确保客户端本地的辅助插件、准星渲染及幽灵追踪均能感知到真实回放数据。
+
+#### 3.11.7 核心开发红线与防错准则 (Critical Development Invariants & Iron Rules)
+
+> [!CAUTION]
+> **绝对开发红线：严禁在未获玩家显式授权下自动注入角色位移输入 (`m_Direction = -1 / 1`)**
+> 
+> 1. **“转向”与“走动”的物理概念绝对隔离**：
+>    - **转向/瞄准 (Aim & Facing)**：由 `m_TargetX` 与 `m_TargetY` 构成的 2D 瞄准矢量决定。在 DDNet/Teeworlds 中，Tee 的面部朝向、眼睛视线、武器指向完全由瞄准矢量决定（`TargetX > 0` 面向右，`TargetX < 0` 面向左）。
+>    - **走动/位移 (Movement)**：由 `m_Direction`（`-1` = 按下 A/左键，`1` = 按下 D/右键，`0` = 无输入）决定。它代表的是玩家的物理键盘按键。
+> 2. **严禁在飞锤时自动走动**：
+>    任何将分身与本体的相对水平距离 $\Delta x$ 转化为 `m_Direction = -1 / 1` 的逻辑均属**严重设计错误**。在 DDNet 中，无论是 Deepfly（DF）还是 Hammerfly（HDF），分身在挥锤时必须保持站位稳定。擅自让分身向本体靠近会直接破坏玩家的飞行身法节奏、导致分身被挤落悬崖或误入冻结区。
+> 3. **网络协议纯正性守则 (`OnSnapInput`)**：
+>    在正常联网游戏（非 FastPractice）时，`CGameClient::OnSnapInput` 必须保持原版 DDNet 的协议规范：
+>    - `m_HammerInput` 只负责武器切换与对准击打（`m_WantedWeapon`, `m_Fire`, `m_TargetX`, `m_TargetY`）；
+>    - `m_Direction`, `m_Jump`, `m_Hook` 必须严格继承玩家的 `m_DummyInput`（未操作时为 `0` 原地静止，开启 `cl_dummy_copy_moves` 或 `cl_dummy_control` 时才执行对应操作），严禁擅自修改或注入任何自动位移。
 
 ---
 
