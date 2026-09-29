@@ -136,6 +136,8 @@ private:
 	bool m_HasDummyAnchor = false;
 	bool m_SuppressFireOnNextPredictTick = false;
 	int m_InputSuppressTicks = 0;
+	int m_PracticeDummyHammerTicks = 0;
+	int m_PracticeDummyHammerActiveTicks = 0;
 	int m_LastClDummy = 0;
 	int m_LastResolvedLocalClientId = -1;
 	int m_LastResolvedDummyClientId = -1;

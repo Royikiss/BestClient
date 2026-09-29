@@ -128,26 +128,36 @@ void CTas::StartRecord(bool ResetTrack)
 	m_State = STATE_RECORDING;
 	m_LastRecordGameTick = -1;
 	m_LastRecordTickTime = time_get();
-	m_RecordTimeAccumulator = 0;
+	const int Speed = std::clamp(g_Config.m_BcTasRecordSpeed, 10, 100);
+	const int64_t Freq = time_freq();
+	m_RecordTimeAccumulator = (Freq * 2) / Speed;
 	m_HazardCooldownTicks = 0;
 	m_WaterCrossing = false;
 	m_WaterCrossingStartTick = -1;
 
 	// Snapshot initial state
 	CFastPractice &Fp = GameClient()->m_FastPractice;
-	int LocalClientId = Fp.ControlledPracticeId();
-	int DummyClientId = Fp.CurrentPracticeDummyId();
-	CCharacter *pLocalChar = Fp.Active() ? Fp.PracticeWorld().GetCharacterById(LocalClientId) : nullptr;
-	if(pLocalChar)
+	const int MainId = GameClient()->m_aLocalIds[0] >= 0 ? GameClient()->m_aLocalIds[0] : GameClient()->m_Snap.m_LocalClientId;
+	const int DummyId = (Client()->DummyConnected() && GameClient()->m_aLocalIds[1] >= 0) ? GameClient()->m_aLocalIds[1] : -1;
+
+	CCharacter *pMainChar = Fp.Active() ? Fp.PracticeWorld().GetCharacterById(MainId) : nullptr;
+	if(!pMainChar && Fp.Active())
+		pMainChar = Fp.PracticeWorld().GetCharacterById(Fp.ControlledPracticeId());
+
+	if(pMainChar)
 	{
 		m_InitialState.m_Valid = true;
 		m_InitialState.m_Tick = 0;
 		m_InitialState.m_GameTick = Fp.PracticeWorld().GameTick();
-		m_InitialState.m_Pos = pLocalChar->Core()->m_Pos;
-		m_InitialState.m_Vel = pLocalChar->Core()->m_Vel;
-		m_InitialState.m_MainCore = pLocalChar->GetCore();
-		m_InitialState.m_MainFreezeTime = pLocalChar->m_FreezeTime;
-		CCharacter *pDummyChar = (DummyClientId >= 0) ? Fp.PracticeWorld().GetCharacterById(DummyClientId) : nullptr;
+		m_InitialState.m_Pos = pMainChar->Core()->m_Pos;
+		m_InitialState.m_Vel = pMainChar->Core()->m_Vel;
+		m_InitialState.m_MainCore = pMainChar->GetCore();
+		m_InitialState.m_MainFreezeTime = pMainChar->m_FreezeTime;
+
+		CCharacter *pDummyChar = (DummyId >= 0 && Fp.Active()) ? Fp.PracticeWorld().GetCharacterById(DummyId) : nullptr;
+		if(!pDummyChar && Fp.Active() && Fp.CurrentPracticeDummyId() >= 0 && Fp.CurrentPracticeDummyId() != MainId)
+			pDummyChar = Fp.PracticeWorld().GetCharacterById(Fp.CurrentPracticeDummyId());
+
 		if(pDummyChar)
 		{
 			m_InitialState.m_DummyCore = pDummyChar->GetCore();
@@ -220,6 +230,19 @@ void CTas::StartPlayback()
 	m_State = STATE_PLAYING;
 	m_PlaybackTick = 0;
 	m_LastPlaybackGameTick = Client()->PredGameTick(g_Config.m_ClDummy);
+
+	// Synchronize initial weapons immediately on playback start
+	const STasTick &FirstTick = m_vTicks[0];
+	if(FirstTick.m_MainInput.m_WantedWeapon > 0)
+	{
+		GameClient()->m_Controls.m_aInputData[0].m_WantedWeapon = FirstTick.m_MainInput.m_WantedWeapon;
+	}
+	if(FirstTick.m_HasDummy && FirstTick.m_DummyInput.m_WantedWeapon > 0)
+	{
+		GameClient()->m_Controls.m_aInputData[1].m_WantedWeapon = FirstTick.m_DummyInput.m_WantedWeapon;
+		GameClient()->m_DummyInput.m_WantedWeapon = FirstTick.m_DummyInput.m_WantedWeapon;
+	}
+
 	char aBuf[128];
 	str_format(aBuf, sizeof(aBuf), BcLocalize("TAS: Playback started (%d ticks, %.2fs)."), (int)m_vTicks.size(), (float)m_vTicks.size() / 50.0f);
 	GameClient()->Echo(aBuf);
@@ -255,10 +278,19 @@ void CTas::SaveCheckpoint()
 	}
 
 	CFastPractice &Fp = GameClient()->m_FastPractice;
-	int LocalClientId = Fp.ControlledPracticeId();
-	int DummyClientId = Fp.CurrentPracticeDummyId();
-	CCharacter *pLocalChar = Fp.Active() ? Fp.PracticeWorld().GetCharacterById(LocalClientId) : nullptr;
-	if(!pLocalChar)
+	if(!Fp.Active())
+	{
+		GameClient()->Echo(BcLocalize("TAS: Cannot save checkpoint - practice sandbox not active!"));
+		return;
+	}
+
+	const int MainId = GameClient()->m_aLocalIds[0] >= 0 ? GameClient()->m_aLocalIds[0] : GameClient()->m_Snap.m_LocalClientId;
+	const int DummyId = (Client()->DummyConnected() && GameClient()->m_aLocalIds[1] >= 0) ? GameClient()->m_aLocalIds[1] : -1;
+
+	CCharacter *pMainChar = Fp.PracticeWorld().GetCharacterById(MainId);
+	if(!pMainChar)
+		pMainChar = Fp.PracticeWorld().GetCharacterById(Fp.ControlledPracticeId());
+	if(!pMainChar)
 	{
 		GameClient()->Echo(BcLocalize("TAS: Cannot save checkpoint - character not found!"));
 		return;
@@ -268,12 +300,15 @@ void CTas::SaveCheckpoint()
 	Cp.m_Valid = true;
 	Cp.m_Tick = (int)m_vTicks.size();
 	Cp.m_GameTick = Fp.PracticeWorld().GameTick();
-	Cp.m_Pos = pLocalChar->Core()->m_Pos;
-	Cp.m_Vel = pLocalChar->Core()->m_Vel;
-	Cp.m_MainCore = pLocalChar->GetCore();
-	Cp.m_MainFreezeTime = pLocalChar->m_FreezeTime;
+	Cp.m_Pos = pMainChar->Core()->m_Pos;
+	Cp.m_Vel = pMainChar->Core()->m_Vel;
+	Cp.m_MainCore = pMainChar->GetCore();
+	Cp.m_MainFreezeTime = pMainChar->m_FreezeTime;
 
-	CCharacter *pDummyChar = (DummyClientId >= 0) ? Fp.PracticeWorld().GetCharacterById(DummyClientId) : nullptr;
+	CCharacter *pDummyChar = (DummyId >= 0) ? Fp.PracticeWorld().GetCharacterById(DummyId) : nullptr;
+	if(!pDummyChar && Fp.CurrentPracticeDummyId() >= 0 && Fp.CurrentPracticeDummyId() != MainId)
+		pDummyChar = Fp.PracticeWorld().GetCharacterById(Fp.CurrentPracticeDummyId());
+
 	if(pDummyChar)
 	{
 		Cp.m_DummyCore = pDummyChar->GetCore();
@@ -300,34 +335,41 @@ void CTas::RestorePhysicalState(const CCharacterCore &MainCore, int MainFreezeTi
 		return;
 
 	CFastPractice &Fp = GameClient()->m_FastPractice;
-	int LocalClientId = Fp.ControlledPracticeId();
-	int DummyClientId = Fp.CurrentPracticeDummyId();
+	const int MainId = GameClient()->m_aLocalIds[0] >= 0 ? GameClient()->m_aLocalIds[0] : GameClient()->m_Snap.m_LocalClientId;
+	const int DummyId = (Client()->DummyConnected() && GameClient()->m_aLocalIds[1] >= 0) ? GameClient()->m_aLocalIds[1] : -1;
 
-	CCharacter *pLocalChar = Fp.PracticeWorld().GetCharacterById(LocalClientId);
-	if(pLocalChar)
+	CCharacter *pMainChar = Fp.PracticeWorld().GetCharacterById(MainId);
+	if(!pMainChar)
+		pMainChar = Fp.PracticeWorld().GetCharacterById(Fp.ControlledPracticeId());
+
+	if(pMainChar)
 	{
-		pLocalChar->SetCore(MainCore);
-		pLocalChar->m_Pos = MainCore.m_Pos;
-		pLocalChar->m_PrevPos = MainCore.m_Pos;
-		pLocalChar->m_PrevPrevPos = MainCore.m_Pos;
-		pLocalChar->m_FreezeTime = MainFreezeTime;
-		pLocalChar->m_FrozenLastTick = (MainFreezeTime > 0);
-		pLocalChar->m_CanMoveInFreeze = false;
+		pMainChar->SetCore(MainCore);
+		pMainChar->m_Pos = MainCore.m_Pos;
+		pMainChar->m_PrevPos = MainCore.m_Pos;
+		pMainChar->m_PrevPrevPos = MainCore.m_Pos;
+		pMainChar->m_FreezeTime = MainFreezeTime;
+		pMainChar->m_FrozenLastTick = (MainFreezeTime > 0);
+		pMainChar->m_CanMoveInFreeze = false;
+		if(MainCore.m_ActiveWeapon >= 0)
+			pMainChar->SetActiveWeapon(MainCore.m_ActiveWeapon);
 	}
 
-	if(DummyClientId >= 0)
+	CCharacter *pDummyChar = (DummyId >= 0) ? Fp.PracticeWorld().GetCharacterById(DummyId) : nullptr;
+	if(!pDummyChar && Fp.CurrentPracticeDummyId() >= 0 && Fp.CurrentPracticeDummyId() != MainId)
+		pDummyChar = Fp.PracticeWorld().GetCharacterById(Fp.CurrentPracticeDummyId());
+
+	if(pDummyChar)
 	{
-		CCharacter *pDummyChar = Fp.PracticeWorld().GetCharacterById(DummyClientId);
-		if(pDummyChar)
-		{
-			pDummyChar->SetCore(DummyCore);
-			pDummyChar->m_Pos = DummyCore.m_Pos;
-			pDummyChar->m_PrevPos = DummyCore.m_Pos;
-			pDummyChar->m_PrevPrevPos = DummyCore.m_Pos;
-			pDummyChar->m_FreezeTime = DummyFreezeTime;
-			pDummyChar->m_FrozenLastTick = (DummyFreezeTime > 0);
-			pDummyChar->m_CanMoveInFreeze = false;
-		}
+		pDummyChar->SetCore(DummyCore);
+		pDummyChar->m_Pos = DummyCore.m_Pos;
+		pDummyChar->m_PrevPos = DummyCore.m_Pos;
+		pDummyChar->m_PrevPrevPos = DummyCore.m_Pos;
+		pDummyChar->m_FreezeTime = DummyFreezeTime;
+		pDummyChar->m_FrozenLastTick = (DummyFreezeTime > 0);
+		pDummyChar->m_CanMoveInFreeze = false;
+		if(DummyCore.m_ActiveWeapon >= 0)
+			pDummyChar->SetActiveWeapon(DummyCore.m_ActiveWeapon);
 	}
 
 	if(GameTick >= 0)
@@ -337,36 +379,33 @@ void CTas::RestorePhysicalState(const CCharacterCore &MainCore, int MainFreezeTi
 		{
 			pNext = (CProjectile *)pProj->TypeNext();
 			const CProjectileData Data = pProj->GetData();
-			if((Data.m_Owner == LocalClientId || Data.m_Owner == DummyClientId) && Data.m_StartTick > GameTick)
+			if((Data.m_Owner == MainId || (DummyId >= 0 && Data.m_Owner == DummyId)) && Data.m_StartTick > GameTick)
 				pProj->Destroy();
 		}
 		Fp.PracticeWorld().m_GameTick = GameTick;
 	}
 
-	Fp.PublishParticipantCores(LocalClientId, DummyClientId);
-	if(pLocalChar)
+	Fp.PublishParticipantCores(MainId, DummyId);
+	if(pMainChar)
 	{
-		Fp.CachePredictedCore(LocalClientId, MainCore);
-		Fp.CachePrevPredictedCore(LocalClientId, MainCore);
-		Fp.FillRenderCharacter(pLocalChar, Fp.m_aFastRenderCur[LocalClientId]);
-		Fp.FillRenderCharacter(pLocalChar, Fp.m_aFastRenderPrev[LocalClientId]);
-		Fp.m_aFastRenderValid[LocalClientId] = true;
+		Fp.CachePredictedCore(MainId, MainCore);
+		Fp.CachePrevPredictedCore(MainId, MainCore);
+		Fp.FillRenderCharacter(pMainChar, Fp.m_aFastRenderCur[MainId]);
+		Fp.FillRenderCharacter(pMainChar, Fp.m_aFastRenderPrev[MainId]);
+		Fp.m_aFastRenderValid[MainId] = true;
 	}
-	if(DummyClientId >= 0)
+	if(pDummyChar && DummyId >= 0)
 	{
-		if(CCharacter *pDummy = Fp.PracticeWorld().GetCharacterById(DummyClientId))
-		{
-			Fp.CachePredictedCore(DummyClientId, DummyCore);
-			Fp.CachePrevPredictedCore(DummyClientId, DummyCore);
-			Fp.FillRenderCharacter(pDummy, Fp.m_aFastRenderCur[DummyClientId]);
-			Fp.FillRenderCharacter(pDummy, Fp.m_aFastRenderPrev[DummyClientId]);
-			Fp.m_aFastRenderValid[DummyClientId] = true;
-		}
+		Fp.CachePredictedCore(DummyId, DummyCore);
+		Fp.CachePrevPredictedCore(DummyId, DummyCore);
+		Fp.FillRenderCharacter(pDummyChar, Fp.m_aFastRenderCur[DummyId]);
+		Fp.FillRenderCharacter(pDummyChar, Fp.m_aFastRenderPrev[DummyId]);
+		Fp.m_aFastRenderValid[DummyId] = true;
 	}
 	Fp.RepublishCachedCores();
 
-	if(pLocalChar)
-		GameClient()->m_LocalCharacterPos = MainCore.m_Pos;
+	if(pMainChar)
+		GameClient()->m_LocalCharacterPos = (g_Config.m_ClDummy && pDummyChar) ? DummyCore.m_Pos : MainCore.m_Pos;
 
 	m_RecordTimeAccumulator = 0;
 }
@@ -522,17 +561,21 @@ void CTas::ToggleWaterCrossing()
 	{
 		// Deactivate water crossing mode: verify outcome
 		CFastPractice &Fp = GameClient()->m_FastPractice;
-		int LocalClientId = Fp.ControlledPracticeId();
-		int DummyClientId = Fp.CurrentPracticeDummyId();
-		CCharacter *pLocalChar = Fp.Active() ? Fp.PracticeWorld().GetCharacterById(LocalClientId) : nullptr;
+		const int MainId = GameClient()->m_aLocalIds[0] >= 0 ? GameClient()->m_aLocalIds[0] : GameClient()->m_Snap.m_LocalClientId;
+		const int DummyId = (Client()->DummyConnected() && GameClient()->m_aLocalIds[1] >= 0) ? GameClient()->m_aLocalIds[1] : -1;
 
-		bool LocalHazard = pLocalChar ? IsHazard(pLocalChar) : false;
+		CCharacter *pMainChar = Fp.Active() ? Fp.PracticeWorld().GetCharacterById(MainId) : nullptr;
+		if(!pMainChar && Fp.Active())
+			pMainChar = Fp.PracticeWorld().GetCharacterById(Fp.ControlledPracticeId());
+
+		bool LocalHazard = pMainChar ? IsHazard(pMainChar) : false;
 		bool DummyHazard = false;
-		if(DummyClientId >= 0)
-		{
-			if(CCharacter *pDummyChar = Fp.PracticeWorld().GetCharacterById(DummyClientId))
-				DummyHazard = IsHazard(pDummyChar);
-		}
+		CCharacter *pDummyChar = (DummyId >= 0 && Fp.Active()) ? Fp.PracticeWorld().GetCharacterById(DummyId) : nullptr;
+		if(!pDummyChar && Fp.Active() && Fp.CurrentPracticeDummyId() >= 0 && Fp.CurrentPracticeDummyId() != MainId)
+			pDummyChar = Fp.PracticeWorld().GetCharacterById(Fp.CurrentPracticeDummyId());
+
+		if(pDummyChar)
+			DummyHazard = IsHazard(pDummyChar);
 
 		const bool InHazard = LocalHazard || DummyHazard;
 
@@ -861,15 +904,20 @@ int CTas::OnSnapInput(int *pData, bool Dummy, bool Force)
 		return 0;
 	}
 
+	const int Conn = g_Config.m_ClDummy ^ (int)Dummy;
 	const STasTick &Tick = m_vTicks[m_PlaybackTick];
-	if(!Dummy)
+	if(Conn == 0)
 	{
 		mem_copy(pData, &Tick.m_MainInput, sizeof(CNetObj_PlayerInput));
+		GameClient()->m_Controls.m_aInputData[0] = Tick.m_MainInput;
 		return sizeof(CNetObj_PlayerInput);
 	}
-	else if(g_Config.m_BcTasPlaybackDummy && Tick.m_HasDummy)
+	else if(Conn == 1 && g_Config.m_BcTasPlaybackDummy && Tick.m_HasDummy)
 	{
 		mem_copy(pData, &Tick.m_DummyInput, sizeof(CNetObj_PlayerInput));
+		GameClient()->m_Controls.m_aInputData[1] = Tick.m_DummyInput;
+		GameClient()->m_DummyInput = Tick.m_DummyInput;
+		GameClient()->m_HammerInput = Tick.m_DummyInput;
 		return sizeof(CNetObj_PlayerInput);
 	}
 	return 0;
@@ -888,19 +936,43 @@ void CTas::OnRecordInput(const int *pData, bool Dummy)
 			m_LastRecordGameTick = CurTick;
 			STasTick NewTick{};
 			NewTick.m_Tick = (int)m_vTicks.size();
+			NewTick.m_GameTick = CurTick;
 			mem_copy(&NewTick.m_MainInput, pData, sizeof(CNetObj_PlayerInput));
 			if(GameClient()->m_Snap.m_pLocalCharacter)
 			{
 				NewTick.m_Pos = vec2(GameClient()->m_Snap.m_pLocalCharacter->m_X, GameClient()->m_Snap.m_pLocalCharacter->m_Y);
 				NewTick.m_Vel = vec2(GameClient()->m_Snap.m_pLocalCharacter->m_VelX / 256.0f, GameClient()->m_Snap.m_pLocalCharacter->m_VelY / 256.0f);
+				if(NewTick.m_MainInput.m_WantedWeapon == 0 && GameClient()->m_Snap.m_pLocalCharacter->m_Weapon >= 0)
+					NewTick.m_MainInput.m_WantedWeapon = GameClient()->m_Snap.m_pLocalCharacter->m_Weapon + 1;
 			}
 			m_vTicks.push_back(NewTick);
 			m_CurrentRecordTick = (int)m_vTicks.size();
 		}
+		else if(!m_vTicks.empty())
+		{
+			mem_copy(&m_vTicks.back().m_MainInput, pData, sizeof(CNetObj_PlayerInput));
+		}
 	}
 	else
 	{
-		if(!m_vTicks.empty())
+		const int DummyId = (Client()->DummyConnected() && GameClient()->m_aLocalIds[1] >= 0) ? GameClient()->m_aLocalIds[1] : -1;
+		if(m_LastRecordGameTick != CurTick)
+		{
+			m_LastRecordGameTick = CurTick;
+			STasTick NewTick{};
+			NewTick.m_Tick = (int)m_vTicks.size();
+			NewTick.m_GameTick = CurTick;
+			mem_copy(&NewTick.m_DummyInput, pData, sizeof(CNetObj_PlayerInput));
+			if(DummyId >= 0 && GameClient()->m_Snap.m_aCharacters[DummyId].m_Active)
+			{
+				if(NewTick.m_DummyInput.m_WantedWeapon == 0 && GameClient()->m_Snap.m_aCharacters[DummyId].m_Cur.m_Weapon >= 0)
+					NewTick.m_DummyInput.m_WantedWeapon = GameClient()->m_Snap.m_aCharacters[DummyId].m_Cur.m_Weapon + 1;
+			}
+			NewTick.m_HasDummy = true;
+			m_vTicks.push_back(NewTick);
+			m_CurrentRecordTick = (int)m_vTicks.size();
+		}
+		else if(!m_vTicks.empty())
 		{
 			STasTick &Last = m_vTicks.back();
 			mem_copy(&Last.m_DummyInput, pData, sizeof(CNetObj_PlayerInput));
@@ -914,8 +986,9 @@ void CTas::PrepareInputForSend(int *pData, int Size, bool Dummy)
 	if(!g_Config.m_BcTasEnabled || m_State != STATE_PLAYING || !pData)
 		return;
 
+	const int Conn = g_Config.m_ClDummy ^ (int)Dummy;
 	int CurTick = Client()->PredGameTick(g_Config.m_ClDummy);
-	if(!Dummy)
+	if(Conn == 0)
 	{
 		if(m_LastPlaybackGameTick != -1 && m_LastPlaybackGameTick != CurTick)
 		{
@@ -931,15 +1004,23 @@ void CTas::PrepareInputForSend(int *pData, int Size, bool Dummy)
 	}
 
 	const STasTick &Tick = m_vTicks[m_PlaybackTick];
-	if(!Dummy)
+	if(Conn == 0)
 	{
 		if(Size >= (int)sizeof(CNetObj_PlayerInput))
+		{
 			mem_copy(pData, &Tick.m_MainInput, sizeof(CNetObj_PlayerInput));
+			GameClient()->m_Controls.m_aInputData[0] = Tick.m_MainInput;
+		}
 	}
-	else if(g_Config.m_BcTasPlaybackDummy && Tick.m_HasDummy)
+	else if(Conn == 1 && g_Config.m_BcTasPlaybackDummy && Tick.m_HasDummy)
 	{
 		if(Size >= (int)sizeof(CNetObj_PlayerInput))
+		{
 			mem_copy(pData, &Tick.m_DummyInput, sizeof(CNetObj_PlayerInput));
+			GameClient()->m_Controls.m_aInputData[1] = Tick.m_DummyInput;
+			GameClient()->m_DummyInput = Tick.m_DummyInput;
+			GameClient()->m_HammerInput = Tick.m_DummyInput;
+		}
 	}
 }
 
@@ -1324,17 +1405,23 @@ bool CTas::CheckHazardAndRewind(int LocalClientId, int DummyClientId)
 		return false;
 
 	CFastPractice &Fp = GameClient()->m_FastPractice;
-	CCharacter *pLocalChar = Fp.PracticeWorld().GetCharacterById(LocalClientId);
-	if(!pLocalChar)
+	const int MainId = GameClient()->m_aLocalIds[0] >= 0 ? GameClient()->m_aLocalIds[0] : GameClient()->m_Snap.m_LocalClientId;
+	const int DummyId = (Client()->DummyConnected() && GameClient()->m_aLocalIds[1] >= 0) ? GameClient()->m_aLocalIds[1] : -1;
+
+	CCharacter *pMainChar = Fp.PracticeWorld().GetCharacterById(MainId);
+	if(!pMainChar)
+		pMainChar = Fp.PracticeWorld().GetCharacterById(LocalClientId);
+	if(!pMainChar)
 		return false;
 
-	bool LocalHazard = IsHazard(pLocalChar);
+	bool LocalHazard = IsHazard(pMainChar);
 	bool DummyHazard = false;
-	if(DummyClientId >= 0)
-	{
-		if(CCharacter *pDummyChar = Fp.PracticeWorld().GetCharacterById(DummyClientId))
-			DummyHazard = IsHazard(pDummyChar);
-	}
+	CCharacter *pDummyChar = (DummyId >= 0) ? Fp.PracticeWorld().GetCharacterById(DummyId) : nullptr;
+	if(!pDummyChar && DummyClientId >= 0 && DummyClientId != MainId)
+		pDummyChar = Fp.PracticeWorld().GetCharacterById(DummyClientId);
+
+	if(pDummyChar)
+		DummyHazard = IsHazard(pDummyChar);
 
 	if(!LocalHazard && !DummyHazard)
 		return false;
@@ -1351,29 +1438,46 @@ void CTas::RecordPracticeTick(int LocalClientId, int DummyClientId, int GameTick
 		return;
 
 	CFastPractice &Fp = GameClient()->m_FastPractice;
-	CCharacter *pLocalChar = Fp.PracticeWorld().GetCharacterById(LocalClientId);
-	if(!pLocalChar)
+	if(!Fp.Active())
 		return;
+
+	const int MainId = GameClient()->m_aLocalIds[0] >= 0 ? GameClient()->m_aLocalIds[0] : GameClient()->m_Snap.m_LocalClientId;
+	const int DummyId = (Client()->DummyConnected() && GameClient()->m_aLocalIds[1] >= 0) ? GameClient()->m_aLocalIds[1] : -1;
+
+	CCharacter *pMainChar = Fp.PracticeWorld().GetCharacterById(MainId);
+	if(!pMainChar)
+		pMainChar = Fp.PracticeWorld().GetCharacterById(LocalClientId);
+	if(!pMainChar)
+		return;
+
+	CCharacter *pDummyChar = (DummyId >= 0) ? Fp.PracticeWorld().GetCharacterById(DummyId) : nullptr;
+	if(!pDummyChar && DummyClientId >= 0 && DummyClientId != MainId)
+		pDummyChar = Fp.PracticeWorld().GetCharacterById(DummyClientId);
 
 	STasTick NewTick{};
 	NewTick.m_Tick = (int)m_vTicks.size();
 	NewTick.m_GameTick = GameTick;
-	NewTick.m_MainInput = *pLocalChar->LatestInput();
-	NewTick.m_Pos = pLocalChar->Core()->m_Pos;
-	NewTick.m_Vel = pLocalChar->Core()->m_Vel;
-	NewTick.m_MainCore = pLocalChar->GetCore();
-	NewTick.m_MainFreezeTime = pLocalChar->m_FreezeTime;
+	NewTick.m_MainInput = *pMainChar->LatestInput();
+	NewTick.m_Pos = pMainChar->Core()->m_Pos;
+	NewTick.m_Vel = pMainChar->Core()->m_Vel;
+	NewTick.m_MainCore = pMainChar->GetCore();
+	NewTick.m_MainFreezeTime = pMainChar->m_FreezeTime;
 
-	if(DummyClientId >= 0)
+	// Capture initial weapon and weapon switches
+	const int MainActiveWeapon = pMainChar->GetActiveWeapon();
+	if(NewTick.m_MainInput.m_WantedWeapon == 0 && MainActiveWeapon >= 0)
+		NewTick.m_MainInput.m_WantedWeapon = MainActiveWeapon + 1;
+
+	if(pDummyChar)
 	{
-		CCharacter *pDummyChar = Fp.PracticeWorld().GetCharacterById(DummyClientId);
-		if(pDummyChar)
-		{
-			NewTick.m_DummyInput = *pDummyChar->LatestInput();
-			NewTick.m_DummyCore = pDummyChar->GetCore();
-			NewTick.m_DummyFreezeTime = pDummyChar->m_FreezeTime;
-			NewTick.m_HasDummy = true;
-		}
+		NewTick.m_DummyInput = *pDummyChar->LatestInput();
+		NewTick.m_DummyCore = pDummyChar->GetCore();
+		NewTick.m_DummyFreezeTime = pDummyChar->m_FreezeTime;
+		NewTick.m_HasDummy = true;
+
+		const int DummyActiveWeapon = pDummyChar->GetActiveWeapon();
+		if(NewTick.m_DummyInput.m_WantedWeapon == 0 && DummyActiveWeapon >= 0)
+			NewTick.m_DummyInput.m_WantedWeapon = DummyActiveWeapon + 1;
 	}
 
 	m_vTicks.push_back(NewTick);

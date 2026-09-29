@@ -407,6 +407,7 @@ protected:
 public:
 	// TClient
 	virtual bool CheckNewInput() = 0;
+	virtual bool IsFastPracticeEnabled() const = 0; // bestclient
 	virtual void SetConnectInfo(const NETADDR *pAddress) = 0;
 
 	virtual void OnConsoleInit() = 0;

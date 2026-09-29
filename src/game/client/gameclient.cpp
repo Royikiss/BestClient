@@ -634,11 +634,13 @@ int CGameClient::OnSnapInput(int *pData, bool Dummy, bool Force)
 	}
 	// bestclient
 
+	const int Conn = g_Config.m_ClDummy ^ (int)Dummy;
+
 	if(!Dummy)
 	{
 		int Ret = m_Controls.SnapInput(pData);
 		if(m_Tas.IsRecordingActive() && !m_FastPractice.Enabled())
-			m_Tas.OnRecordInput(pData, false);
+			m_Tas.OnRecordInput(pData, Conn == 1);
 		return Ret;
 	}
 	if(m_aLocalIds[!g_Config.m_ClDummy] < 0)
@@ -660,6 +662,8 @@ int CGameClient::OnSnapInput(int *pData, bool Dummy, bool Force)
 		}
 
 		mem_copy(pData, &m_DummyInput, sizeof(m_DummyInput));
+		if(m_Tas.IsRecordingActive() && !m_FastPractice.Enabled())
+			m_Tas.OnRecordInput(pData, Conn == 1);
 		return sizeof(m_DummyInput);
 	}
 	else
@@ -684,8 +688,19 @@ int CGameClient::OnSnapInput(int *pData, bool Dummy, bool Force)
 
 		m_HammerInput.m_TargetX = (int)Dir.x;
 		m_HammerInput.m_TargetY = (int)Dir.y;
+		if(m_HammerInput.m_TargetX == 0 && m_HammerInput.m_TargetY == 0)
+			m_HammerInput.m_TargetY = -1;
+
+		if(Dir.x < -12.0f)
+			m_HammerInput.m_Direction = -1;
+		else if(Dir.x > 12.0f)
+			m_HammerInput.m_Direction = 1;
+		else
+			m_HammerInput.m_Direction = 0;
 
 		mem_copy(pData, &m_HammerInput, sizeof(m_HammerInput));
+		if(m_Tas.IsRecordingActive() && !m_FastPractice.Enabled())
+			m_Tas.OnRecordInput(pData, Conn == 1);
 		return sizeof(m_HammerInput);
 	}
 }
@@ -6385,6 +6400,11 @@ bool CGameClient::CheckNewInput()
 	if(IsCloudInputMode()) // bestclient
 		return m_CloudInput.CheckNewInput(m_Controls); // bestclient
 	return m_Controls.CheckNewInput();
+}
+
+bool CGameClient::IsFastPracticeEnabled() const
+{
+	return m_FastPractice.Enabled();
 }
 
 void CGameClient::SetConnectInfo(const NETADDR *pAddress)

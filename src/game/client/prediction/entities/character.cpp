@@ -244,7 +244,7 @@ void CCharacter::HandleWeaponSwitch()
 
 	// Direct Weapon selection
 	if(m_LatestInput.m_WantedWeapon)
-		WantedWeapon = m_Input.m_WantedWeapon - 1;
+		WantedWeapon = m_LatestInput.m_WantedWeapon - 1;
 
 	// check for insane values
 	if(WantedWeapon >= 0 && WantedWeapon < NUM_WEAPONS && WantedWeapon != m_Core.m_ActiveWeapon && m_Core.m_aWeapons[WantedWeapon].m_Got)

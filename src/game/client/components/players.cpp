@@ -23,7 +23,9 @@
 #include <game/client/components/skins.h>
 #include <game/client/components/sounds.h>
 #include <game/client/components/bestclient/bestclient.h> // bestclient
+#include <game/client/components/bestclient/fast_practice.h> // bestclient
 #include <game/client/components/bestclient/jelly_tee.h> // bestclient
+#include <game/client/components/bestclient/tas.h> // bestclient
 #include <game/client/gameclient.h>
 #include <game/collision.h>
 #include <game/gamecore.h>
@@ -107,10 +109,40 @@ float CPlayers::GetPlayerTargetAngle(
 	int ClientId,
 	float Intra)
 {
+	// TAS playback target angles
+	if(GameClient()->m_Tas.IsPlaybackActive())
+	{
+		const int PlaybackTick = GameClient()->m_Tas.PlaybackTick();
+		const auto &vTicks = GameClient()->m_Tas.Ticks();
+		if(PlaybackTick >= 0 && PlaybackTick < (int)vTicks.size())
+		{
+			const auto &Tick = vTicks[PlaybackTick];
+			if(ClientId == GameClient()->m_aLocalIds[0] && (Tick.m_MainInput.m_TargetX != 0 || Tick.m_MainInput.m_TargetY != 0))
+				return angle(vec2(Tick.m_MainInput.m_TargetX, Tick.m_MainInput.m_TargetY));
+			if(Tick.m_HasDummy && ClientId == GameClient()->m_aLocalIds[1] && (Tick.m_DummyInput.m_TargetX != 0 || Tick.m_DummyInput.m_TargetY != 0))
+				return angle(vec2(Tick.m_DummyInput.m_TargetX, Tick.m_DummyInput.m_TargetY));
+		}
+	}
+
+	// FastPractice target angles for practice participants
+	if(GameClient()->m_FastPractice.Active() && GameClient()->m_FastPractice.IsPracticeParticipant(ClientId))
+	{
+		if(ClientId == GameClient()->m_aLocalIds[!g_Config.m_ClDummy])
+		{
+			if(CCharacter *pPracticeChar = GameClient()->m_FastPractice.PracticeWorld().GetCharacterById(ClientId))
+			{
+				const CNetObj_PlayerInput *pInput = pPracticeChar->LatestInput();
+				if(pInput && (pInput->m_TargetX != 0 || pInput->m_TargetY != 0))
+					return angle(vec2(pInput->m_TargetX, pInput->m_TargetY));
+			}
+		}
+	}
+
 	if(GameClient()->PredictDummy() && GameClient()->m_aLocalIds[!g_Config.m_ClDummy] == ClientId)
 	{
 		const CNetObj_PlayerInput &Input = g_Config.m_ClDummyHammer ? GameClient()->m_HammerInput : GameClient()->m_DummyInput;
-		return angle(vec2(Input.m_TargetX, Input.m_TargetY));
+		if(Input.m_TargetX != 0 || Input.m_TargetY != 0)
+			return angle(vec2(Input.m_TargetX, Input.m_TargetY));
 	}
 
 	// with dummy copy, use the same angle as local player
@@ -732,7 +764,14 @@ void CPlayers::RenderPlayer(
 	bool PredictLocalWeapons = false;
 	float AttackTime = (Client()->PrevGameTick(g_Config.m_ClDummy) - Player.m_AttackTick) / (float)Client()->GameTickSpeed() + Client()->GameTickTime(g_Config.m_ClDummy);
 	float LastAttackTime = (Client()->PrevGameTick(g_Config.m_ClDummy) - Player.m_AttackTick) / (float)Client()->GameTickSpeed() + s_LastGameTickTime;
-	if(ClientId >= 0 && GameClient()->m_aClients[ClientId].m_IsPredictedLocal && GameClient()->AntiPingGunfire())
+	if(ClientId >= 0 && GameClient()->m_FastPractice.IsPracticeParticipant(ClientId))
+	{
+		PredictLocalWeapons = true;
+		const int PracticeTick = GameClient()->m_FastPractice.PracticeWorld().GameTick();
+		AttackTime = (Client()->PredIntraGameTick(g_Config.m_ClDummy) + (PracticeTick - 1 - Player.m_AttackTick)) / (float)Client()->GameTickSpeed();
+		LastAttackTime = (s_LastPredIntraTick + (PracticeTick - 1 - Player.m_AttackTick)) / (float)Client()->GameTickSpeed();
+	}
+	else if(ClientId >= 0 && GameClient()->m_aClients[ClientId].m_IsPredictedLocal && GameClient()->AntiPingGunfire())
 	{
 		PredictLocalWeapons = true;
 		AttackTime = (Client()->PredIntraGameTick(g_Config.m_ClDummy) + (Client()->PredGameTick(g_Config.m_ClDummy) - 1 - Player.m_AttackTick)) / (float)Client()->GameTickSpeed();

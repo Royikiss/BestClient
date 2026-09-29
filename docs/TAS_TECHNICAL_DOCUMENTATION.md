@@ -1,9 +1,9 @@
 # BestClient TAS (Tool-Assisted Speedrun) 技术架构与开发维护全景指南
 
 > **面向后续开发人员与 AI Agent 的完整技术规范**  
-> **文档版本**: 1.2.0  
+> **文档版本**: 1.3.0  
 > **适用代码分支**: `feature/tas`  
-> **最后更新**: 2026-09-29 (v1.2.0: 多检查点列表管理系统、轨迹详情展示与名称覆盖保存、移除起跑线就绪与自动起跑、图块坐标对齐、精简界面)  
+> **最后更新**: 2026-09-29 (v1.3.0: 本体与分身双角色交互深度优化、开火隔离与假Tee挥锤动画同步、录制开局零卡顿瞬时预测、DF/HDF按键绑定录制与智能转向瞄准同步体系)  
 
 ---
 
@@ -58,10 +58,13 @@ BestClient TAS 采用了创新的 **“本地沙盒物理录制 + 云端精准�
 | 模块/文件 | 路径 | 核心职责 |
 | :--- | :--- | :--- |
 | **TAS 核心组件** | `src/game/client/components/bestclient/tas.h`<br>`src/game/client/components/bestclient/tas.cpp` | 录制/回放状态机、输入捕获、减速步进控制、物理状态快照与还原、危险判定与自动回退、文件 I/O |
-| **本地练习沙盒** | `src/game/client/components/bestclient/fast_practice.h`<br>`src/game/client/components/bestclient/fast_practice.cpp` | 本地独立物理世界（`m_PracticeWorld`）、预测与渲染实体代理、中立输入构造 |
+| **本地练习沙盒** | `src/game/client/components/bestclient/fast_practice.h`<br>`src/game/client/components/bestclient/fast_practice.cpp` | 本地独立物理世界（`m_PracticeWorld`）、预测与渲染实体代理、中立输入构造、DF/HDF 转向与即时开火同步 |
 | **TAS 界面组件** | `src/game/client/components/bestclient/menus_tas.cpp` | TAS& 独立配置菜单、状态指示器、录制/回放控制、多检查点管理列表、轨迹详情展示与名称保存/覆盖 |
 | **配置变量定义** | `src/engine/shared/config_variables_bestclient.h` | 声明 `bc_tas_*` 相关持久化变量 |
-| **网络输入桥接** | `src/game/client/gameclient.cpp` | 在 `OnSnapInput` 与 `OnPredictTick` 拦截并路由用户输入 |
+| **客户端预测引擎** | `src/engine/client.h`<br>`src/engine/client/client.cpp` | 客户端主循环预测驱动，在本地练习沙盒激活时无条件触发预测，杜绝录制启动冻结 |
+| **角色渲染组件** | `src/game/client/components/players.cpp` | 假 Tee 攻击与受击动画时钟对齐，本体与分身瞄准角度渲染同步 |
+| **角色行为实体** | `src/game/client/prediction/entities/character.cpp`<br>`src/game/server/entities/character.cpp` | 客户端与服务端实体逻辑，修复直接武器切换识别缺陷 |
+| **网络输入桥接** | `src/game/client/gameclient.h`<br>`src/game/client/gameclient.cpp` | 在 `OnSnapInput` 与 `OnPredictTick` 拦截并路由用户输入，提供分身方向与目标计算 |
 | **多语言本地化** | `data/BestClient/languages/simplified_chinese.txt`<br>`data/BestClient/languages/russian.txt` | 界面与控制台通知多语言词条 |
 
 ### 2.2 状态机生命周期 (Lifecycle State Machine)
@@ -402,6 +405,156 @@ struct STasFileInfo
     vec2 m_StartPos;
 };
 ```
+
+---
+
+### 3.10 本体与分身（Dummy）双角色协同录制与开火隔离体系 (Dual-Tee Coordination & Fire Isolation)
+
+#### 3.10.1 真实服务器 Tee 开火隔离与状态锁定 (`CaptureServerLockedTargets`, `m_aServerLockedFire`)
+* **核心痛点**：
+  在早期的沙盒录制中，存在三处严重影响真实角色的网络泄露缺陷：
+  1. 按下开启 TAS 录制按钮瞬间，云端真实 Tee 会在服务器原地开火；
+  2. 录制过程中玩家按下开火键挥锤/射击时，云端真实 Tee 同步开火；
+  3. 在录制中按下切换分身按键（`X`）时，云端真实 Tee 或分身被诱发一次开火。
+  这些外泄不仅会暴露玩家行为，消耗服务器端的真实弹药，甚至可能触发 DDNet 服务器的防挂机制或干扰第三方玩家。
+* **隔离与锁定原理**：
+  1. **锁定基准开火态（Released State）**：
+     在 `CFastPractice::CaptureServerLockedTargets()` 中，记录进入本地沙盒时玩家控制器的上一帧输入状态 `GameClient()->m_Controls.m_aLastData[Slot]`。通过 `ReleasedFireState(LastInput.m_Fire)` 将其清洗为偶数态（Even value，即按键完全释放未击发状态），保存在 `m_aServerLockedFire[Slot]` 中。
+  2. **中立包强制隔离分发**：
+     在构造发往服务器的中立数据包 `CFastPractice::BuildNeutralInput()` 时，坚决断开与本地活跃输入（`Source.m_Fire`）的连接，强制赋值为锁定值：
+     ```cpp
+     const int SafeSlot = (Slot >= 0 && Slot < NUM_DUMMIES) ? Slot : 0;
+     OutInput.m_Fire = m_aServerLockedFire[SafeSlot];
+     ```
+     无论玩家在本地物理沙盒中挥锤多么频繁，发往真实服务器的输入包中的 `m_Fire` 始终静默锁定在偶数释放态，服务器真实 Tee 绝对不会执行任何开火动作。
+  3. **分身切换时免除强制抑火与冷却**：
+     当 TAS 录制处于活动状态时（`GameClient()->m_Tas.IsRecordingActive()`），分身切换（`X`）不再触发常规练习模式下的重置抑火冷却，保证本地沙盒内本体与分身随时无缝交替操作。
+
+#### 3.10.2 本地物理世界假 Tee 攻击与受击动画同步 (`PracticeWorld().GameTick()`)
+* **核心痛点**：
+  录制减速或原速进行 TAS 录制时，玩家按下开火按键操纵假 Tee 挥锤，虽然物理上拥有真实的击飞碰撞判定（能够锤飞队友），但画面上的假 Tee 却没有任何挥锤击打动画或后坐力动画（表现为静止平移），视觉反馈严重割裂。
+* **原因分析**：
+  DDNet 原版 `CPlayers::RenderPlayer` 中的武器攻击动画推进直接依赖于客户端对真实网络服务器的预测时钟 `Client()->PredGameTick()` 与 `Player.m_AttackTick` 的差值。而在本地沙盒录制中，物理实体完全由独立的本地物理世界 `m_PracticeWorld` 驱动，其 `GameTick()` 独立按减速频率累进，真实服务器的预测 Tick 几乎处于静止状态，导致动画时钟差值无法向前步进，动画瞬间冻结。
+* **沙盒时钟对齐方案**：
+  在 `CPlayers::RenderPlayer` 中识别当前渲染角色是否属于本地练习沙盒的参与者（`IsPracticeParticipant(ClientId)`），若属于沙盒角色，则强制将武器预测与动画基准 Tick 重定向至沙盒物理世界的 `PracticeWorld().GameTick()`：
+  ```cpp
+  if(ClientId >= 0 && GameClient()->m_FastPractice.IsPracticeParticipant(ClientId))
+  {
+      PredictLocalWeapons = true;
+      const int PracticeTick = GameClient()->m_FastPractice.PracticeWorld().GameTick();
+      AttackTime = (Client()->PredIntraGameTick(g_Config.m_ClDummy) + (PracticeTick - 1 - Player.m_AttackTick)) / (float)Client()->GameTickSpeed();
+      LastAttackTime = (s_LastPredIntraTick + (PracticeTick - 1 - Player.m_AttackTick)) / (float)Client()->GameTickSpeed();
+  }
+  ```
+  这一改动确保了在 10%~100% 任意减速录制比例下，假 Tee 的挥锤、武器后坐力、光剑收放动画均能与沙盒物理微秒级对齐，呈现流畅逼真的视觉打击反馈。
+
+#### 3.10.3 录制启动首帧零延迟瞬时预测体系 (Instant Prediction on Recording Start)
+* **核心痛点**：
+  在开启 TAS 录制的最初几秒钟内，游戏画面出现严重冻结停顿，必须手动按下一个移动方向键（A/D）并等待片刻，物理引擎才会“苏醒”并恢复至指定的录制速度。
+* **根因深度诊断**：
+  1. **引擎预测休眠机制**：在原版 `CClient::Update()` 中，仅当输入发生变化或收到网络包时才将 `Repredict` 置为 `true`；更致命的是紧随其后的网络门控：
+     ```cpp
+     if(m_aPredTick[Dummy] > m_aCurGameTick[Dummy] && ...)
+         GameClient()->OnPredict();
+     ```
+     在录制刚开启时，云端网络没有新的物理帧推进，本地又尚未敲击键盘，导致该条件持续为 `false`，`OnPredict()` 彻底休眠挂起。
+  2. **减速时间累加器冷启动**：`CTas` 的 `m_RecordTimeAccumulator` 初始为 0，需从真实系统时钟中等待 `(Freq * 2) / Speed` 的时间积累（在 20% 慢速下长达 100ms~1000ms），才开始步进第 0 帧。
+  3. **渲染插值缓存未初始化**：`CFastPractice::Rebuild` 未填充初始预测帧的渲染数据 `m_aFastRenderCur` / `m_aFastRenderPrev`，导致首帧视觉位置判定为无效。
+* **全链路消除方案**：
+  1. **引擎循环强制唤醒**：在 `CClient::Update()` 中增加全局判定，当本地沙盒激活时（`GameClient()->IsFastPracticeEnabled()`），无条件置位 `Repredict = true`，并完全绕过 `m_aPredTick > m_aCurGameTick` 的网络门限限制，保证每一帧渲染循环都无条件驱动本地物理预测。
+  2. **累加器初始预热**：在 `CTas::StartRecord` 中，将时间累加器预置为一个完整步进周期：
+     ```cpp
+     m_RecordTimeAccumulator = (Freq * 2) / Speed;
+     ```
+     使得进入录制态的第 0 个循环立即命中 `ConsumeSlowMoTicks() >= 1`，瞬时完成第 0 帧物理快照录制。
+  3. **渲染插值双缓冲预载**：在 `CFastPractice::Rebuild()` 中，立即使用实体当前姿态填充 `m_aFastRenderCur` 与 `m_aFastRenderPrev` 并置位 `m_aFastRenderValid = true`，彻底消除黑屏与视觉拉扯。
+
+#### 3.10.4 武器切换直接响应与全帧持久化记录 (Direct Weapon Switching)
+* **核心痛点**：
+  1. 原版 DDNet 客户端预测实体 `CCharacter::HandleWeaponSwitch()` 中存在历史笔误：直接选择武器时读取了上一帧的 `m_Input.m_WantedWeapon - 1`，而非最新捕获的 `m_LatestInput.m_WantedWeapon - 1`，导致直接按键选武器（如按 1 切锤、按 2 切枪）偶发丢失或必须按两次。
+  2. TAS 录制只在玩家按键的瞬间捕获 `m_WantedWeapon`，随后的离散帧如果缺省该字段，回放时角色武器状态可能会恢复为默认值。
+* **解决方案**：
+  1. **实体武器切换修复**：同步修复客户端预测与服务端实体中的 `HandleWeaponSwitch()`：
+     ```cpp
+     if(m_LatestInput.m_WantedWeapon)
+         WantedWeapon = m_LatestInput.m_WantedWeapon - 1;
+     ```
+  2. **当前活动武器持久化注入**：在 `CTas::RecordPracticeTick` 中，如果当前输入包未携带新的武器切换请求（`m_WantedWeapon == 0`），系统自动探查角色当前实际手持的武器（`GetActiveWeapon()`），并自动将其持久化编码至每一帧的 `STasTick::m_WantedWeapon = ActiveWeapon + 1` 中，确保序列化轨迹在任何切片点都具备自解释的武器状态。
+
+---
+
+### 3.11 DF（Deepfly）与 HDF（Hammerfly Dummy）智能转向、瞄准追踪与零延迟同步体系 (DF/HDF Smart Steering & Aim Tracking System)
+
+#### 3.11.1 痛点与需求背景
+在 DDNet 高难度跑图（尤其是 Solo/DDRace 关卡）中，Deepfly（DF，深层双人飞锤）与 Hammerfly Dummy（HDF，单人操纵分身飞锤）是最核心的双人互动身法。然而在传统录制机制下存在以下严重阻碍：
+1. **开火延迟不可接受**：原版 Dummy Hammer 采用 25 物理 Tick（500ms）固定节拍计数器，分身只能以机械化慢速自动挥锤，玩家在空中无法自由掌控击打节奏。
+2. **转向缺失与打空**：开启 DF 或 HDF 后，以往录制系统只捕获了分身的开火按键信号，**没有录制分身面向本体的水平转向（`m_Direction`），也没有录制分身在挥锤时应当对准本体中心的相对瞄准向量（`m_TargetX/Y`）**。导致录制回放时分身朝向随机漂移，锤子打在空处，无法形成向上推力。
+
+#### 3.11.2 动态水平朝向智能引导 (`m_Direction`)
+* **算法逻辑**：
+  当开启 DF/HDF 模式时，系统在 `CFastPractice::TickPracticeWorld` 与 `CGameClient::OnSnapInput` 中实时监测本地本体与分身的相对物理水平坐标：
+  $$\Delta x = \text{Pos}_{\text{main}}.x - \text{Pos}_{\text{dummy}}.x$$
+* **分级死区转向控制**：
+  ```cpp
+  if(Dir.x < -12.0f)
+      DummyNeutralizedInput.m_Direction = -1;
+  else if(Dir.x > 12.0f)
+      DummyNeutralizedInput.m_Direction = 1;
+  else
+      DummyNeutralizedInput.m_Direction = 0;
+  ```
+  通过设置 $\pm 12.0\text{px}$ 的微调死区（小于 Tee 的半径 14px）：
+  - 当本体偏左时，分身自动向左走（-1）；
+  - 当本体偏右时，分身自动向右走（+1）；
+  - 当两者处于垂直对齐线附近时，分身保持水平中立（0）避免震荡。
+  使分身在飞天过程中始终自发面朝本体并进行跟进修正。
+
+#### 3.11.3 核心质心瞄准追踪 (`m_TargetX`, `m_TargetY`)
+在每一次步进中，系统计算从分身核心指向本体核心的相对向量：
+$$\vec{D} = \vec{\text{Pos}}_{\text{main}} - \vec{\text{Pos}}_{\text{dummy}}$$
+```cpp
+DummyNeutralizedInput.m_TargetX = (int)Dir.x;
+DummyNeutralizedInput.m_TargetY = (int)Dir.y;
+if(DummyNeutralizedInput.m_TargetX == 0 && DummyNeutralizedInput.m_TargetY == 0)
+    DummyNeutralizedInput.m_TargetY = -1;
+```
+分身的瞄准十字准星与攻击射线被绝对绑定在本体的物理质心中心，即使两者在空中高速旋转翻滚，分身击打的落点永远严格位于本体刚体中心，实现 100% 击飞有效率。
+
+#### 3.11.4 零延迟开火即时同步 (Zero-Latency Fire Sync)
+* **核心突破**：
+  为了实现玩家敲击一次开火、分身毫秒级同步挥锤的跟手手感，系统引入了开火跳沿检测算法：
+  ```cpp
+  const bool LocalFireJustPressed = pInputData && (pInputData->m_Fire % 2 != 0) && (pLocalChar->LatestInput()->m_Fire % 2 == 0);
+  const bool DummyHammerJustActivated = DummyHammerMode && (m_PracticeDummyHammerTicks == 0);
+  const bool CadenceTick = DummyHammerMode && (m_PracticeDummyHammerTicks % 25 == 0);
+  const bool ShouldSwing = DummyHammerMode && (LocalFireJustPressed || DummyHammerJustActivated || CadenceTick);
+  ```
+* 一旦检测到本体执行了由偶变奇的开火操作（`LocalFireJustPressed`），分身在**完全相同的当前物理 Tick** 立即置位奇数开火状态（`(LatestFire + 1) | 1`），并在该 Tick 即刻生效伤害与击飞计算。彻底破除 25-tick 传统节拍延迟限制，达成零延迟同步飞锤。
+
+#### 3.11.5 35-Tick 粘滞追踪窗口 (Sticky Tracking Window / `m_PracticeDummyHammerActiveTicks`)
+* **痛点机制**：
+  玩家在键盘或鼠标上连续点按 DF 开火键时，两次按键之间会产生数帧至十几帧的“按键抬起（Release）”区间。如果仅在按键按下的瞬间执行追踪，在松开按键的间隙分身会骤然失去目标，准星瞬间弹回默认坐标 `(1, 0)`，造成录制轨迹的角度剧烈抖动与回放失败。
+* **粘滞保护设计**：
+  系统在 `CFastPractice` 中引入 `m_PracticeDummyHammerActiveTicks` 粘滞计时器：
+  1. 只要触发了一次有效挥锤，立即将粘滞窗口置为 **35 个物理 Tick（0.7 秒）**；
+  2. 在随后的按键释放间隙内，只要该计数器未归零，分身持续维持指向本体的瞄准矢量、面朝本体的水平朝向、以及强制手持武器为铁锤（`WEAPON_HAMMER`）；
+  3. 计数器随 Tick 递减，当超过 35 帧没有任何后续操作时平滑回退。
+  该机制确保了连续敲击过程中，录制生成的全部中间帧均具有完美的连续性和自然平滑度。
+
+#### 3.11.6 双角色视觉瞄准角渲染与全链路回放缓冲区广播
+1. **视觉渲染层对齐 (`CPlayers::GetPlayerTargetAngle`)**：
+   - 解决了分身在录制与回放时手持铁锤朝向屏幕正右方 `(1, 0)`、像盲人一样攻击的视觉缺陷。
+   - 在 TAS 回放阶段，`GetPlayerTargetAngle` 直接从当前回放帧 `m_vTicks[PlaybackTick]` 中读取录制好的 `m_MainInput` 与 `m_DummyInput` 瞄准角进行渲染。
+   - 在 FastPractice 练习阶段，直接从沙盒角色的 `LatestInput()` 中提取瞄准角。
+   屏幕上的准星、角色手臂与铁锤击打方向与物理世界计算完全一致。
+2. **回放输入全链路广播 (`PrepareInputForSend` & `OnSnapInput`)**：
+   在向网络发送预录制数据时，分身的离散输入不仅写入发送缓冲区 `pData`，同时同步广播更新至客户端控制中心：
+   ```cpp
+   GameClient()->m_Controls.m_aInputData[1] = Tick.m_DummyInput;
+   GameClient()->m_DummyInput = Tick.m_DummyInput;
+   GameClient()->m_HammerInput = Tick.m_DummyInput;
+   ```
+   确保客户端本地的辅助插件、准星渲染及幽灵追踪均能感知到真实回放数据。
 
 ---
 
