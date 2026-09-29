@@ -101,6 +101,7 @@ public:
 	int NeededFaketuning() const { return m_NeededFaketuning; }
 	bool IsAlive() const { return m_Alive; }
 	bool IsPaused() const { return m_Paused; }
+	int GetReloadTimer() const { return m_ReloadTimer; }
 	CPlayer *GetPlayer() { return m_pPlayer; }
 	const CPlayer *GetPlayer() const { return m_pPlayer; }
 	CClientMask TeamMask();

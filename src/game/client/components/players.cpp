@@ -127,13 +127,26 @@ float CPlayers::GetPlayerTargetAngle(
 	// FastPractice target angles for practice participants
 	if(GameClient()->m_FastPractice.Active() && GameClient()->m_FastPractice.IsPracticeParticipant(ClientId))
 	{
-		if(ClientId == GameClient()->m_aLocalIds[!g_Config.m_ClDummy])
+		const int PartnerId = GameClient()->m_FastPractice.PartnerPracticeId();
+		if(ClientId == PartnerId || ClientId == GameClient()->m_aLocalIds[!g_Config.m_ClDummy])
 		{
 			if(CCharacter *pPracticeChar = GameClient()->m_FastPractice.PracticeWorld().GetCharacterById(ClientId))
 			{
 				const CNetObj_PlayerInput *pInput = pPracticeChar->LatestInput();
 				if(pInput && (pInput->m_TargetX != 0 || pInput->m_TargetY != 0))
 					return angle(vec2(pInput->m_TargetX, pInput->m_TargetY));
+			}
+			int LocalId = -1, DummyId = -1;
+			if(GameClient()->m_FastPractice.ResolvePracticeRoles(LocalId, DummyId))
+			{
+				CCharacter *pLocal = GameClient()->m_FastPractice.PracticeWorld().GetCharacterById(LocalId);
+				CCharacter *pDummy = GameClient()->m_FastPractice.PracticeWorld().GetCharacterById(DummyId);
+				if(pLocal && pDummy)
+				{
+					vec2 Dir = pLocal->Core()->m_Pos - pDummy->Core()->m_Pos;
+					if(Dir.x != 0 || Dir.y != 0)
+						return angle(Dir);
+				}
 			}
 		}
 	}

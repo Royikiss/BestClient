@@ -54,6 +54,7 @@ public:
 	int ControlledPracticeId() const;
 	int PartnerPracticeId() const;
 	int CurrentPracticeDummyId() const;
+	bool ResolvePracticeRoles(int &LocalClientId, int &DummyClientId) const;
 	bool GetLocalRaceState(SLocalRaceState &State) const;
 
 	CGameWorld &PracticeWorld() { return m_PracticeWorld; }
@@ -62,6 +63,8 @@ public:
 	const CGameWorld &PracticePrevWorld() const { return m_PracticePrevWorld; }
 
 	bool GetFastInputRenderCharacter(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur) const;
+	void LatchPracticeFire() { m_PracticeFireLatched = true; }
+	void LatchDummyHammer() { m_PracticeDummyHammerLatched = true; }
 
 	void OnReset() override;
 	void OnMapLoad() override;
@@ -136,7 +139,9 @@ private:
 	bool m_HasDummyAnchor = false;
 	bool m_SuppressFireOnNextPredictTick = false;
 	int m_InputSuppressTicks = 0;
-	int m_PracticeDummyHammerTicks = 0;
+	int m_LastPracticeLocalFire = 0;
+	bool m_PracticeFireLatched = false;
+	bool m_PracticeDummyHammerLatched = false;
 	int m_PracticeDummyHammerActiveTicks = 0;
 	int m_LastClDummy = 0;
 	int m_LastResolvedLocalClientId = -1;
@@ -179,13 +184,13 @@ private:
 	static constexpr int FREEZE_SKIN_DEBOUNCE_TICKS = 3;
 
 	static void ConFastPracticeToggle(IConsole::IResult *pResult, void *pUserData);
+	static void ConchainDummyHammer(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 
 	void ResetPracticeState();
 	void ResetCommandState();
 	void ResetPracticeRaceStates();
 	void UpdatePracticeRaceState(int ClientId, const CCharacter *pChar, int Tick);
 	void SyncPracticeWorldConfig(CGameWorld &World);
-	bool ResolvePracticeRoles(int &LocalClientId, int &DummyClientId) const;
 	int CurrentLocalPracticeId() const;
 	void UpdateGhostData();
 	void UpdateGhostForClientId(int ClientId, SGhostData &Ghost);

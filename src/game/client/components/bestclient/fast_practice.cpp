@@ -41,8 +41,7 @@ namespace
 
 		if(Input.m_TargetX == 0 && Input.m_TargetY == 0)
 		{
-			Input.m_TargetX = 1;
-			Input.m_TargetY = 0;
+			Input.m_TargetY = -1;
 		}
 	}
 
@@ -162,13 +161,15 @@ void CFastPractice::ResetPracticeState()
 	m_HasDummyAnchor = false;
 	m_SuppressFireOnNextPredictTick = false;
 	m_InputSuppressTicks = 0;
-	m_PracticeDummyHammerTicks = 0;
+	m_LastPracticeLocalFire = 0;
+	m_PracticeFireLatched = false;
+	m_PracticeDummyHammerLatched = false;
 	m_PracticeDummyHammerActiveTicks = 0;
 	m_LastClDummy = g_Config.m_ClDummy;
 	m_LastResolvedLocalClientId = -1;
 	m_LastResolvedDummyClientId = -1;
 	m_aHasServerLockedTargets.fill(false);
-	m_aServerLockedTargets.fill(ivec2(1, 0));
+	m_aServerLockedTargets.fill(ivec2(0, -1));
 	m_aServerLockedFire.fill(0);
 	m_aServerLockedNextWeapon.fill(0);
 	m_aServerLockedPrevWeapon.fill(0);
@@ -721,8 +722,7 @@ void CFastPractice::CaptureServerLockedTargets()
 		int TargetY = Input.m_TargetY;
 		if(TargetX == 0 && TargetY == 0)
 		{
-			TargetX = 1;
-			TargetY = 0;
+			TargetY = -1;
 		}
 		m_aServerLockedTargets[Slot] = ivec2(TargetX, TargetY);
 		if(!m_aHasServerLockedTargets[Slot])
@@ -1066,10 +1066,32 @@ void CFastPractice::BuildLiveInput(CNetObj_PlayerInput &OutInput, bool Dummy) co
 {
 	const int Slot = Dummy ? (!g_Config.m_ClDummy) : g_Config.m_ClDummy;
 	OutInput = GameClient()->m_Controls.m_aInputData[Slot];
+	if(Dummy)
+	{
+		int LocalId = -1, DummyId = -1;
+		if(ResolvePracticeRoles(LocalId, DummyId))
+		{
+			const CCharacter *pLocal = m_PracticeWorld.GetCharacterById(LocalId);
+			const CCharacter *pDummy = m_PracticeWorld.GetCharacterById(DummyId);
+			if(pLocal && pDummy)
+			{
+				vec2 Dir = pLocal->Core()->m_Pos - pDummy->Core()->m_Pos;
+				if(Dir.x != 0 || Dir.y != 0)
+				{
+					OutInput.m_TargetX = (int)Dir.x;
+					OutInput.m_TargetY = (int)Dir.y;
+				}
+				else
+				{
+					OutInput.m_TargetY = -1;
+				}
+				return;
+			}
+		}
+	}
 	if(OutInput.m_TargetX == 0 && OutInput.m_TargetY == 0)
 	{
-		OutInput.m_TargetX = 1;
-		OutInput.m_TargetY = 0;
+		OutInput.m_TargetY = -1;
 	}
 }
 
@@ -1115,7 +1137,28 @@ void CFastPractice::BuildNeutralInput(CNetObj_PlayerInput &OutInput, bool Dummy,
 		}
 	}
 	if(OutInput.m_TargetX == 0 && OutInput.m_TargetY == 0)
-		OutInput.m_TargetX = 1;
+	{
+		if(Dummy)
+		{
+			int LocalId = -1, DummyId = -1;
+			if(ResolvePracticeRoles(LocalId, DummyId))
+			{
+				const CCharacter *pLocal = m_PracticeWorld.GetCharacterById(LocalId);
+				const CCharacter *pDummy = m_PracticeWorld.GetCharacterById(DummyId);
+				if(pLocal && pDummy)
+				{
+					vec2 Dir = pLocal->Core()->m_Pos - pDummy->Core()->m_Pos;
+					if(Dir.x != 0 || Dir.y != 0)
+					{
+						OutInput.m_TargetX = (int)Dir.x;
+						OutInput.m_TargetY = (int)Dir.y;
+					}
+				}
+			}
+		}
+		if(OutInput.m_TargetX == 0 && OutInput.m_TargetY == 0)
+			OutInput.m_TargetY = -1;
+	}
 }
 
 void CFastPractice::FillRenderCharacter(CCharacter *pChar, CNetObj_Character &Out) const
@@ -1199,6 +1242,7 @@ void CFastPractice::RepublishCachedCores() const
 		{
 			GameClient()->m_PredictedChar = m_aPublishedPredicted[ClientId];
 			GameClient()->m_PredictedPrevChar = m_aPublishedPrevPredicted[ClientId];
+			GameClient()->m_LocalCharacterPos = m_aPublishedPredicted[ClientId].m_Pos;
 		}
 	}
 }
@@ -1484,6 +1528,11 @@ void CFastPractice::TickPracticeWorld()
 			if(!pInputData)
 			{
 				BuildLiveInput(LiveInput, GameClient()->m_IsDummySwapping != 0);
+				if(m_PracticeFireLatched)
+				{
+					LiveInput.m_Fire = (LiveInput.m_Fire + 1) | 1;
+					m_PracticeFireLatched = false;
+				}
 				pInputData = &LiveInput;
 			}
 			if(pDummyChar && !pDummyInputData)
@@ -1524,12 +1573,16 @@ void CFastPractice::TickPracticeWorld()
 
 		if(pDummyChar)
 		{
-			const bool DummyHammerMode = g_Config.m_ClDummyHammer != 0 || (g_Config.m_ClDummyControl != 0 && g_Config.m_ClDummyFire != 0);
-			if(DummyHammerMode || m_PracticeDummyHammerActiveTicks > 0)
+			const bool DummyHammerActive = g_Config.m_ClDummyHammer != 0 || (g_Config.m_ClDummyControl != 0 && g_Config.m_ClDummyFire != 0);
+			const bool DummyHammerTriggered = DummyHammerActive || m_PracticeDummyHammerLatched;
+
+			const vec2 Dir = pLocalChar->Core()->m_Pos - pDummyChar->Core()->m_Pos;
+
+			if(DummyHammerTriggered || m_PracticeDummyHammerActiveTicks > 0)
 			{
 				DummyNeutralizedInput = pDummyInputData ? *pDummyInputData : CNetObj_PlayerInput{};
 				pDummyInputData = &DummyNeutralizedInput;
-				const vec2 Dir = pLocalChar->Core()->m_Pos - pDummyChar->Core()->m_Pos;
+
 				DummyNeutralizedInput.m_TargetX = (int)Dir.x;
 				DummyNeutralizedInput.m_TargetY = (int)Dir.y;
 				if(DummyNeutralizedInput.m_TargetX == 0 && DummyNeutralizedInput.m_TargetY == 0)
@@ -1546,24 +1599,21 @@ void CFastPractice::TickPracticeWorld()
 				if(pDummyChar->GetActiveWeapon() != WEAPON_HAMMER && pDummyChar->Core()->m_aWeapons[WEAPON_HAMMER].m_Got)
 					pDummyChar->SetActiveWeapon(WEAPON_HAMMER);
 
-				const bool LocalFireJustPressed = pInputData && (pInputData->m_Fire % 2 != 0) && (pLocalChar->LatestInput()->m_Fire % 2 == 0);
-				const bool DummyHammerJustActivated = DummyHammerMode && (m_PracticeDummyHammerTicks == 0);
-				const bool CadenceTick = DummyHammerMode && (m_PracticeDummyHammerTicks % 25 == 0);
-				const bool ShouldSwing = DummyHammerMode && (LocalFireJustPressed || DummyHammerJustActivated || CadenceTick);
+				const bool ReloadReady = pDummyChar->GetReloadTimer() <= 0;
 
-				if(ShouldSwing)
+				if(DummyHammerTriggered && ReloadReady)
 				{
 					DummyNeutralizedInput.m_Fire = (pDummyChar->LatestInput()->m_Fire + 1) | 1;
-					m_PracticeDummyHammerTicks = 1;
 					m_PracticeDummyHammerActiveTicks = 35;
+					m_PracticeDummyHammerLatched = false;
 				}
 				else
 				{
 					DummyNeutralizedInput.m_Fire = (pDummyChar->LatestInput()->m_Fire + 1) & ~1;
-					if(DummyHammerMode)
-						m_PracticeDummyHammerTicks++;
 					if(m_PracticeDummyHammerActiveTicks > 0)
 						m_PracticeDummyHammerActiveTicks--;
+					if(!DummyHammerActive && pDummyChar->GetReloadTimer() <= 0)
+						m_PracticeDummyHammerLatched = false;
 				}
 
 				GameClient()->m_HammerInput = DummyNeutralizedInput;
@@ -1571,7 +1621,15 @@ void CFastPractice::TickPracticeWorld()
 			}
 			else
 			{
-				m_PracticeDummyHammerTicks = 0;
+				if(pDummyInputData && pDummyInputData->m_TargetX == 0 && pDummyInputData->m_TargetY == 0)
+				{
+					DummyNeutralizedInput = *pDummyInputData;
+					pDummyInputData = &DummyNeutralizedInput;
+					DummyNeutralizedInput.m_TargetX = (int)Dir.x;
+					DummyNeutralizedInput.m_TargetY = (int)Dir.y;
+					if(DummyNeutralizedInput.m_TargetX == 0 && DummyNeutralizedInput.m_TargetY == 0)
+						DummyNeutralizedInput.m_TargetY = -1;
+				}
 			}
 		}
 
@@ -2909,7 +2967,19 @@ bool CFastPractice::ConsumePracticeChatCommand(int Team, const char *pLine)
 	return true;
 }
 
+void CFastPractice::ConchainDummyHammer(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
+{
+	pfnCallback(pResult, pCallbackUserData);
+	CFastPractice *pSelf = static_cast<CFastPractice *>(pUserData);
+	if(pResult->NumArguments() && pResult->GetInteger(0))
+	{
+		pSelf->m_PracticeDummyHammerLatched = true;
+	}
+}
+
 void CFastPractice::OnConsoleInit()
 {
 	Console()->Register("fast_practice_toggle", "", CFGFLAG_CLIENT, ConFastPracticeToggle, this, "Toggle fast practice mode");
+	Console()->Chain("cl_dummy_hammer", ConchainDummyHammer, this);
 }
+

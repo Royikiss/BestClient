@@ -682,9 +682,21 @@ int CGameClient::OnSnapInput(int *pData, bool Dummy, bool Force)
 			m_DummyInput.m_WantedWeapon = WEAPON_HAMMER + 1;
 		}
 
-		// const vec2 Dir = m_LocalCharacterPos - m_aClients[m_aLocalIds[!g_Config.m_ClDummy]].m_Predicted.m_Pos;
-		// TClient
-		const vec2 Dir = m_LocalCharacterPos - m_aClients[m_aLocalIds[!g_Config.m_ClDummy]].m_RegularPredicted.m_Pos;
+		vec2 LocalPos = m_LocalCharacterPos;
+		vec2 DummyPos = (m_aLocalIds[!g_Config.m_ClDummy] >= 0) ? m_aClients[m_aLocalIds[!g_Config.m_ClDummy]].m_RegularPredicted.m_Pos : vec2(0, 0);
+
+		if(m_FastPractice.Active())
+		{
+			int LocalId = -1, DummyId = -1;
+			if(m_FastPractice.ResolvePracticeRoles(LocalId, DummyId))
+			{
+				if(CCharacter *pLocal = m_FastPractice.PracticeWorld().GetCharacterById(LocalId))
+					LocalPos = pLocal->Core()->m_Pos;
+				if(CCharacter *pDummy = m_FastPractice.PracticeWorld().GetCharacterById(DummyId))
+					DummyPos = pDummy->Core()->m_Pos;
+			}
+		}
+		const vec2 Dir = LocalPos - DummyPos;
 
 		m_HammerInput.m_TargetX = (int)Dir.x;
 		m_HammerInput.m_TargetY = (int)Dir.y;

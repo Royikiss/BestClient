@@ -94,7 +94,15 @@ void CControls::ConKeyInputCounter(IConsole::IResult *pResult, void *pUserData)
 	*pVariable &= INPUT_STATE_MASK;
 	// bestclient
 	if(pVariable == &pState->m_pControls->m_aInputData[g_Config.m_ClDummy].m_Fire)
+	{
 		pState->m_pControls->GameClient()->m_BestClient.OnGoresFireInput(pResult->GetInteger(0));
+		if(pResult->GetInteger(0) && pState->m_pControls->GameClient()->m_FastPractice.Active())
+		{
+			pState->m_pControls->GameClient()->m_FastPractice.LatchPracticeFire();
+			if(g_Config.m_ClDummyHammer)
+				pState->m_pControls->GameClient()->m_FastPractice.LatchDummyHammer();
+		}
+	}
 	// bestclient
 }
 

@@ -485,15 +485,55 @@ struct STasFileInfo
 
 ### 3.11 DF（Deepfly）与 HDF（Hammerfly Dummy）智能转向、瞄准追踪与零延迟同步体系 (DF/HDF Smart Steering & Aim Tracking System)
 
-#### 3.11.1 痛点与需求背景
-在 DDNet 高难度跑图（尤其是 Solo/DDRace 关卡）中，Deepfly（DF，深层双人飞锤）与 Hammerfly Dummy（HDF，单人操纵分身飞锤）是最核心的双人互动身法。然而在传统录制机制下存在以下严重阻碍：
-1. **开火延迟不可接受**：原版 Dummy Hammer 采用 25 物理 Tick（500ms）固定节拍计数器，分身只能以机械化慢速自动挥锤，玩家在空中无法自由掌控击打节奏。
-2. **转向缺失与打空**：开启 DF 或 HDF 后，以往录制系统只捕获了分身的开火按键信号，**没有录制分身面向本体的水平转向（`m_Direction`），也没有录制分身在挥锤时应当对准本体中心的相对瞄准向量（`m_TargetX/Y`）**。导致录制回放时分身朝向随机漂移，锤子打在空处，无法形成向上推力。
+#### 3.11.1 痛点与根本原因剖析
+在 DDNet 高难度跑图（尤其是 Solo/DDRace 关卡）中，Deepfly（DF，深层双人飞锤）与 Hammerfly Dummy（HDF，单人操纵分身飞锤）是最核心的双人互动身法。然而在旧版本机制下，假 Tee（本地幻影）与真实 Tee 存在明显操作断层：
+1. **开火延迟累积与慢动作丢帧**：
+   - 旧逻辑使用了硬编码的 25 物理 Tick（500ms）节奏计数器 `m_PracticeDummyHammerTicks`。在 35-tick 粘滞窗口未耗尽时，该计数器未被正确归零，导致连续点击时陷入无休止的 cadence 间隔等待；在慢动作下（如 20% 速度每 Tick 耗时 100ms），25 ticks 会被放大为 2.5 秒的巨额延迟，且随游戏时间累积越来越高；慢速步进间隙内的快速鼠标点击还会因为未锁存而被直接丢失。
+2. **水平挥锤打空（垂直仰角丢失）**：
+   - 原版 `CGameClient::OnSnapInput` 计算分身瞄准向量时直接使用了 `m_aClients[dummy].m_RegularPredicted.m_Pos`，该坐标在 FastPractice 期间固定为服务器地板上的静止生成点，导致 $\Delta y = 0$（纯水平）；
+   - `CFastPractice::BuildLiveInput` 与 `BuildNeutralInput` 在目标为零时硬编码回退至 `TargetX = 1, TargetY = 0`（水平朝右），且未在每帧持续追踪真实空中本体坐标。导致即便本体跳到分身上方，分身依然朝水平方向空挥，无法提供向上击飞推力。
 
-#### 3.11.2 动态水平朝向智能引导 (`m_Direction`)
-* **算法逻辑**：
-  当开启 DF/HDF 模式时，系统在 `CFastPractice::TickPracticeWorld` 与 `CGameClient::OnSnapInput` 中实时监测本地本体与分身的相对物理水平坐标：
-  $$\Delta x = \text{Pos}_{\text{main}}.x - \text{Pos}_{\text{dummy}}.x$$
+#### 3.11.2 物理引擎装填计时器直接驱动零延迟开火 (`ReloadTimer <= 0`)
+* **直接继承物理引擎极限射速**：
+  彻底废弃人造 25-tick 计数器，分身铁锤冷却严格受 DDNet 物理核心的 `m_ReloadTimer`（命中 16 ticks = 320ms，未命中 6 ticks = 120ms）仲裁：
+  ```cpp
+  const bool ReloadReady = pDummyChar->GetReloadTimer() <= 0;
+  if(DummyHammerTriggered && ReloadReady)
+  {
+      DummyNeutralizedInput.m_Fire = (pDummyChar->LatestInput()->m_Fire + 1) | 1;
+      m_PracticeDummyHammerActiveTicks = 35;
+      m_PracticeDummyHammerLatched = false;
+  }
+  else
+  {
+      DummyNeutralizedInput.m_Fire = (pDummyChar->LatestInput()->m_Fire + 1) & ~1;
+      if(m_PracticeDummyHammerActiveTicks > 0)
+          m_PracticeDummyHammerActiveTicks--;
+      if(!DummyHammerActive && pDummyChar->GetReloadTimer() <= 0)
+          m_PracticeDummyHammerLatched = false;
+  }
+  ```
+* **首击 Tick 0 瞬发与边沿触发**：
+  当玩家按下 DF 开火键或开启 HDF 时，只要装填就绪（`ReloadReady`），分身在当前 Tick 立即置位奇数开火，实现 0 延迟即刻击飞；在装填期间保持偶数释放态，确保装填完毕瞬间必定触发一次物理级 `CountInput().m_Presses` 上升沿，达到物理极限最高连击速率。
+* **按键锁存器 (`LatchPracticeFire` & `LatchDummyHammer`)**：
+  在慢动作或帧步进模式下，对于在慢速物理 Tick 间隔之间完成的快速点击释放，在 `CControls::ConKeyInputCounter` 与 `ConchainDummyHammer` 中执行原子锁存，杜绝任何按键漏拍。
+
+#### 3.11.3 沙盒物理坐标直接映射与垂直瞄准对准 (`m_TargetX`, `m_TargetY`)
+* **根除水平盲击**：
+  在 `TickPracticeWorld`、`BuildLiveInput`、`BuildNeutralInput`、`OnSnapInput` 以及渲染层 `GetPlayerTargetAngle` 中，全面改用沙盒世界当前实时的动态质心坐标：
+  ```cpp
+  const vec2 Dir = pLocalChar->Core()->m_Pos - pDummyChar->Core()->m_Pos;
+  DummyNeutralizedInput.m_TargetX = (int)Dir.x;
+  DummyNeutralizedInput.m_TargetY = (int)Dir.y;
+  if(DummyNeutralizedInput.m_TargetX == 0 && DummyNeutralizedInput.m_TargetY == 0)
+      DummyNeutralizedInput.m_TargetY = -1;
+  ```
+* **全仰角与垂直打击**：
+  若本体在分身上方空中，$\vec{D}.y < 0$，分身准星与手臂即刻向上仰起；`CCharacter::FireWeapon()` 根据该方向生成命中判定球 `ProjStartPos`，无论本体在上方、侧方还是对角线，均能精准锁定命中。
+* **默认方向兜底**：
+  所有无效输入的目标兜底从水平 `(1, 0)` 修正为垂直向上 `(0, -1)`，彻底杜绝意外水平锤击。
+
+#### 3.11.4 动态水平朝向智能引导 (`m_Direction`)
 * **分级死区转向控制**：
   ```cpp
   if(Dir.x < -12.0f)
@@ -509,43 +549,17 @@ struct STasFileInfo
   - 当两者处于垂直对齐线附近时，分身保持水平中立（0）避免震荡。
   使分身在飞天过程中始终自发面朝本体并进行跟进修正。
 
-#### 3.11.3 核心质心瞄准追踪 (`m_TargetX`, `m_TargetY`)
-在每一次步进中，系统计算从分身核心指向本体核心的相对向量：
-$$\vec{D} = \vec{\text{Pos}}_{\text{main}} - \vec{\text{Pos}}_{\text{dummy}}$$
-```cpp
-DummyNeutralizedInput.m_TargetX = (int)Dir.x;
-DummyNeutralizedInput.m_TargetY = (int)Dir.y;
-if(DummyNeutralizedInput.m_TargetX == 0 && DummyNeutralizedInput.m_TargetY == 0)
-    DummyNeutralizedInput.m_TargetY = -1;
-```
-分身的瞄准十字准星与攻击射线被绝对绑定在本体的物理质心中心，即使两者在空中高速旋转翻滚，分身击打的落点永远严格位于本体刚体中心，实现 100% 击飞有效率。
-
-#### 3.11.4 零延迟开火即时同步 (Zero-Latency Fire Sync)
-* **核心突破**：
-  为了实现玩家敲击一次开火、分身毫秒级同步挥锤的跟手手感，系统引入了开火跳沿检测算法：
-  ```cpp
-  const bool LocalFireJustPressed = pInputData && (pInputData->m_Fire % 2 != 0) && (pLocalChar->LatestInput()->m_Fire % 2 == 0);
-  const bool DummyHammerJustActivated = DummyHammerMode && (m_PracticeDummyHammerTicks == 0);
-  const bool CadenceTick = DummyHammerMode && (m_PracticeDummyHammerTicks % 25 == 0);
-  const bool ShouldSwing = DummyHammerMode && (LocalFireJustPressed || DummyHammerJustActivated || CadenceTick);
-  ```
-* 一旦检测到本体执行了由偶变奇的开火操作（`LocalFireJustPressed`），分身在**完全相同的当前物理 Tick** 立即置位奇数开火状态（`(LatestFire + 1) | 1`），并在该 Tick 即刻生效伤害与击飞计算。彻底破除 25-tick 传统节拍延迟限制，达成零延迟同步飞锤。
-
-#### 3.11.5 35-Tick 粘滞追踪窗口 (Sticky Tracking Window / `m_PracticeDummyHammerActiveTicks`)
-* **痛点机制**：
-  玩家在键盘或鼠标上连续点按 DF 开火键时，两次按键之间会产生数帧至十几帧的“按键抬起（Release）”区间。如果仅在按键按下的瞬间执行追踪，在松开按键的间隙分身会骤然失去目标，准星瞬间弹回默认坐标 `(1, 0)`，造成录制轨迹的角度剧烈抖动与回放失败。
-* **粘滞保护设计**：
-  系统在 `CFastPractice` 中引入 `m_PracticeDummyHammerActiveTicks` 粘滞计时器：
-  1. 只要触发了一次有效挥锤，立即将粘滞窗口置为 **35 个物理 Tick（0.7 秒）**；
-  2. 在随后的按键释放间隙内，只要该计数器未归零，分身持续维持指向本体的瞄准矢量、面朝本体的水平朝向、以及强制手持武器为铁锤（`WEAPON_HAMMER`）；
-  3. 计数器随 Tick 递减，当超过 35 帧没有任何后续操作时平滑回退。
-  该机制确保了连续敲击过程中，录制生成的全部中间帧均具有完美的连续性和自然平滑度。
+#### 3.11.5 完美承接正式模式操作与分身切换 (`dummy_swap`)
+* **多模式操作直通**：
+  - **DF 模式**（`bind mouse1 "+fire; +toggle cl_dummy_hammer 1 0"`）：点击即打、松开即止，通过 `ConchainDummyHammer` 链路捕获实时按键状态。
+  - **HDF 模式**（`bind key "toggle cl_dummy_hammer 0 1"`）：开启后分身进入物理极限连锤状态，关闭后即刻回归中立。
+  - **分身控制模式**（`cl_dummy_control 1` + `cl_dummy_fire 1`）：支持手控分身开火。
+  - **分身切换（`X` 键 / `dummy_swap`）**：通过 `CurrentLocalPracticeId()` 动态自适应角色互换，分身角色与受控角色无论如何切换，飞锤与瞄准均实时指向当前受控主体。
 
 #### 3.11.6 双角色视觉瞄准角渲染与全链路回放缓冲区广播
 1. **视觉渲染层对齐 (`CPlayers::GetPlayerTargetAngle`)**：
-   - 解决了分身在录制与回放时手持铁锤朝向屏幕正右方 `(1, 0)`、像盲人一样攻击的视觉缺陷。
    - 在 TAS 回放阶段，`GetPlayerTargetAngle` 直接从当前回放帧 `m_vTicks[PlaybackTick]` 中读取录制好的 `m_MainInput` 与 `m_DummyInput` 瞄准角进行渲染。
-   - 在 FastPractice 练习阶段，直接从沙盒角色的 `LatestInput()` 中提取瞄准角。
+   - 在 FastPractice 练习阶段，从沙盒角色的 `LatestInput()` 中提取瞄准角；若未设置则直接从沙盒相对质心向量计算 `angle(Dir)`。
    屏幕上的准星、角色手臂与铁锤击打方向与物理世界计算完全一致。
 2. **回放输入全链路广播 (`PrepareInputForSend` & `OnSnapInput`)**：
    在向网络发送预录制数据时，分身的离散输入不仅写入发送缓冲区 `pData`，同时同步广播更新至客户端控制中心：
