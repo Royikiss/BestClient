@@ -1588,13 +1588,6 @@ void CFastPractice::TickPracticeWorld()
 				if(DummyNeutralizedInput.m_TargetX == 0 && DummyNeutralizedInput.m_TargetY == 0)
 					DummyNeutralizedInput.m_TargetY = -1;
 
-				if(Dir.x < -12.0f)
-					DummyNeutralizedInput.m_Direction = -1;
-				else if(Dir.x > 12.0f)
-					DummyNeutralizedInput.m_Direction = 1;
-				else
-					DummyNeutralizedInput.m_Direction = 0;
-
 				DummyNeutralizedInput.m_WantedWeapon = WEAPON_HAMMER + 1;
 				if(pDummyChar->GetActiveWeapon() != WEAPON_HAMMER && pDummyChar->Core()->m_aWeapons[WEAPON_HAMMER].m_Got)
 					pDummyChar->SetActiveWeapon(WEAPON_HAMMER);

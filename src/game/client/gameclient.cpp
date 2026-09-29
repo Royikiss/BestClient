@@ -703,12 +703,9 @@ int CGameClient::OnSnapInput(int *pData, bool Dummy, bool Force)
 		if(m_HammerInput.m_TargetX == 0 && m_HammerInput.m_TargetY == 0)
 			m_HammerInput.m_TargetY = -1;
 
-		if(Dir.x < -12.0f)
-			m_HammerInput.m_Direction = -1;
-		else if(Dir.x > 12.0f)
-			m_HammerInput.m_Direction = 1;
-		else
-			m_HammerInput.m_Direction = 0;
+		m_HammerInput.m_Direction = m_DummyInput.m_Direction;
+		m_HammerInput.m_Jump = m_DummyInput.m_Jump;
+		m_HammerInput.m_Hook = m_DummyInput.m_Hook;
 
 		mem_copy(pData, &m_HammerInput, sizeof(m_HammerInput));
 		if(m_Tas.IsRecordingActive() && !m_FastPractice.Enabled())
