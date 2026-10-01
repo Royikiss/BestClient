@@ -1013,6 +1013,7 @@ private:
 	void RenderSettingsBestClientChatMediaBlock(CUIRect &Column); // bestclient
 	void RenderSettingsTasAnd(CUIRect MainView); // TAS&
 	void RenderSettingsTas(CUIRect MainView); // TAS&
+	void RenderSettingsAvoid(CUIRect MainView); // TAS& / Avoid
 	void RenderSettingsTasHelpers(CUIRect MainView); // TAS&
 	void RenderPopupStylePicker(CUIRect Box); // bestclient
 	void FinishWelcomeToStylePicker(); // bestclient

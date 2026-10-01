@@ -381,6 +381,11 @@ int CControls::SnapInput(int *pData)
 		// bestclient
 		if(GameClient()->m_FastPractice.Enabled())
 			Send = true;
+		// bestclient: an armed Avoid agent has to be able to rewrite the input on EVERY tick.
+		// Without this the "send at least 25 Hz" limit above would silently halve its reaction
+		// rate exactly when the player holds a key steadily, i.e. when it matters most.
+		if(GameClient()->m_Avoid.WantsEveryTickInput())
+			Send = true;
 		// bestclient
 	}
 

@@ -580,12 +580,13 @@ void CMenus::RenderSettingsTasAnd(CUIRect MainView)
 
 	MainView.HSplitTop(BestClientUiTheme::IsNewTabOption() ? 6.0f : 8.0f, nullptr, &MainView);
 
-	// Subtabs: TAS, Auxiliary
+	// Subtabs: TAS, Avoid, Auxiliary
 	const char *apTabNames[] = {
 		BcLocalize("TAS"),
+		BcLocalize("Avoid"),
 		BcLocalize("Auxiliary"),
 	};
-	constexpr int NumTabs = 2;
+	constexpr int NumTabs = 3;
 
 	static CButtonContainer s_aSubTabButtons[NumTabs];
 
@@ -597,7 +598,7 @@ void CMenus::RenderSettingsTasAnd(CUIRect MainView)
 		for(int i = 0; i < NumTabs; ++i)
 		{
 			TabBar.VSplitLeft(TabWidth, &TabButton, &TabBar);
-			const int Corners = i == 0 ? IGraphics::CORNER_L : IGraphics::CORNER_R;
+			const int Corners = i == 0 ? IGraphics::CORNER_L : (i == NumTabs - 1 ? IGraphics::CORNER_R : IGraphics::CORNER_NONE);
 			if(DoButton_MenuTab(&s_aSubTabButtons[i], apTabNames[i], g_Config.m_BcTasTab == i, &TabButton, Corners))
 				g_Config.m_BcTasTab = i;
 		}
@@ -605,6 +606,8 @@ void CMenus::RenderSettingsTasAnd(CUIRect MainView)
 	}
 
 	if(g_Config.m_BcTasTab == 1)
+		RenderSettingsAvoid(MainView);
+	else if(g_Config.m_BcTasTab == 2)
 		RenderSettingsTasHelpers(MainView);
 	else
 		RenderSettingsTas(MainView);

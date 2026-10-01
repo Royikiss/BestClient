@@ -3036,6 +3036,9 @@ if(CLIENT)
     components/bestclient/tas.cpp
     components/bestclient/tas.h
     components/bestclient/menus_tas.cpp
+    components/bestclient/avoid.cpp
+    components/bestclient/avoid.h
+    components/bestclient/menus_avoid.cpp
     components/bestclient/finish_prediction.cpp
     components/bestclient/finish_prediction.h
     components/bestclient/keystrokes.cpp

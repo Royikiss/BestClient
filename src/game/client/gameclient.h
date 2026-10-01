@@ -49,6 +49,7 @@
 #include "components/bestclient/edgehelper.h" // bestclient
 #include "components/bestclient/fast_practice.h" // bestclient
 #include "components/bestclient/tas.h" // bestclient
+#include "components/bestclient/avoid.h" // bestclient
 #include "components/bestclient/finish_prediction.h" // bestclient
 #include "components/bestclient/keystrokes.h" // bestclient
 // bestclient
@@ -251,6 +252,7 @@ public:
 	CCloudInput m_CloudInput; // bestclient
 	CFastPractice m_FastPractice; // bestclient
 	CTas m_Tas; // bestclient
+	CAvoid m_Avoid; // bestclient
 	CBcAutoMargin m_BcAutoMargin; // bestclient
 	COptimizer m_Optimizer; // bestclient
 	CProcessPriority m_ProcessPriority; // bestclient

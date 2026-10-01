@@ -7,6 +7,13 @@
 
 ---
 
+> [!NOTE]
+> **TAS& 菜单现在包含三个子标签：`TAS` / `Avoid`（避障）/ `Auxiliary`（辅助模块）。**
+> 其中避障子模块有自己的完整技术文档：[`docs/AVOID_TECHNICAL_DOCUMENTATION.md`](AVOID_TECHNICAL_DOCUMENTATION.md)。
+> 两者共享同一套输入挂点与 HUD 渲染阶段，交叉注意事项见该文档的附录 E。
+
+---
+
 ## 1. 概述与设计理念
 
 ### 1.1 背景与核心痛点
@@ -59,7 +66,8 @@ BestClient TAS 采用了创新的 **“本地沙盒物理录制 + 云端精准�
 | :--- | :--- | :--- |
 | **TAS 核心组件** | `src/game/client/components/bestclient/tas.h`<br>`src/game/client/components/bestclient/tas.cpp` | 录制/回放状态机、输入捕获、减速步进控制、物理状态快照与还原、危险判定与自动回退、文件 I/O |
 | **本地练习沙盒** | `src/game/client/components/bestclient/fast_practice.h`<br>`src/game/client/components/bestclient/fast_practice.cpp` | 本地独立物理世界（`m_PracticeWorld`）、预测与渲染实体代理、中立输入构造、DF/HDF 转向与即时开火同步 |
-| **TAS 界面组件** | `src/game/client/components/bestclient/menus_tas.cpp` | TAS& 独立配置菜单、状态指示器、录制/回放控制、多检查点管理列表、轨迹详情展示与名称保存/覆盖 |
+| **TAS 界面组件** | `src/game/client/components/bestclient/menus_tas.cpp` | TAS& 独立配置菜单（三个子标签：`TAS` / `Avoid` / `Auxiliary`）、状态指示器、录制/回放控制、多检查点管理列表、轨迹详情展示与名称保存/覆盖 |
+| **避障子模块** | `src/game/client/components/bestclient/avoid.h`<br>`src/game/client/components/bestclient/avoid.cpp`<br>`src/game/client/components/bestclient/menus_avoid.cpp` | TAS& 下的 **Avoid（避障 / Gores Bot）** 子模块：危险感知、输入拦截、HUD 模块、参数界面。**独立文档见 [`docs/AVOID_TECHNICAL_DOCUMENTATION.md`](AVOID_TECHNICAL_DOCUMENTATION.md)** |
 | **配置变量定义** | `src/engine/shared/config_variables_bestclient.h` | 声明 `bc_tas_*` 相关持久化变量 |
 | **客户端预测引擎** | `src/engine/client.h`<br>`src/engine/client/client.cpp` | 客户端主循环预测驱动，在本地练习沙盒激活时无条件触发预测，杜绝录制启动冻结 |
 | **角色渲染组件** | `src/game/client/components/players.cpp` | 假 Tee 攻击与受击动画时钟对齐，本体与分身瞄准角度渲染同步 |
@@ -631,7 +639,7 @@ T 2 0 120 -50 0 1 1 0 0 0 0 0 0 0 0 0 0 0 361.00 812.10
 | `bc_tas_playback_dummy` | int | `1` | 0~1 | 若文件包含分身轨迹，是否同步回放分身 |
 | `bc_tas_show_hud` | int | `1` | 0~1 | 屏幕右上角显示 TAS 状态与进度 HUD |
 | `bc_tas_current_file` | string | `""` | - | 当前选中的 `.tas` 文件名 |
-| `bc_tas_tab` | int | `0` | 0~1 | TAS 界面子标签栏（0=TAS, 1=辅助模块） |
+| `bc_tas_tab` | int | `0` | 0~2 | TAS 界面子标签栏（0=TAS, 1=避障, 2=辅助模块） |
 
 ### 5.2 控制台命令 (Console Commands)
 | 命令 | 参数 | 说明 |

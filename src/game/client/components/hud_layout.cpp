@@ -48,6 +48,7 @@ static const SModuleLayout gs_aModuleLayouts[MODULE_COUNT] = {
 	{484.0f, 172.0f, 100, 0, true, true, 0x66000000U, 100},
 	{250.0f, 258.0f, 100, 0, true, true, 0x66000000U, 100},
 	{200.0f, 168.0f, 100, 0, true, true, 0xE6000033U, 100},
+	{286.0f, 52.0f, 100, 0, false, true, 0x66000000U, 100},
 };
 
 static const char *gs_apModuleIds[MODULE_COUNT] = {
@@ -75,6 +76,7 @@ static const char *gs_apModuleIds[MODULE_COUNT] = {
 	"dummy_actions",
 	"swap_timer",
 	"edge_info",
+	"avoid",
 };
 
 static const char *gs_apModuleNames[MODULE_COUNT] = {
@@ -102,6 +104,7 @@ static const char *gs_apModuleNames[MODULE_COUNT] = {
 	"Dummy Actions",
 	"Swap timer",
 	"Edge Info",
+	"Avoid",
 };
 
 static SModuleLayout gs_aRuntimeModuleLayouts[MODULE_COUNT];
@@ -485,6 +488,8 @@ bool IsEditorModule(EModule Module)
 	case MODULE_VOICE_STATUS:
 	// bestclient
 	case MODULE_EDGE_INFO:
+	// bestclient
+	case MODULE_AVOID:
 	// bestclient
 	case MODULE_FINISH_PREDICTION:
 	case MODULE_KEYSTROKES_KEYBOARD:

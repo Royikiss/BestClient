@@ -156,7 +156,6 @@ void CGameClient::OnConsoleInit()
 					      &m_MovingTilesBackground, // TClient
 					      &m_CloudInput, // bestclient
 					      &m_FastPractice, // bestclient
-					      &m_Tas, // bestclient
 					      &m_BcAutoMargin, // bestclient
 					      &m_MapLayersForeground,
 					      &m_MovingTilesForeground, // TClient
@@ -203,6 +202,10 @@ void CGameClient::OnConsoleInit()
 					      &m_ClientIndicator, // bestclient
 					      &m_VoiceChat, // bestclient
 					      &m_Hud,
+					      // bestclient: TAS and Avoid draw HUD panels, so they belong to the HUD pass.
+					      // Registering them earlier made the foreground map layer paint over them.
+					      &m_Tas, // bestclient
+					      &m_Avoid, // bestclient
 					      &m_BestClient, // bestclient
 					      // bestclient
 					      &m_Translate, // bestclient
@@ -641,6 +644,11 @@ int CGameClient::OnSnapInput(int *pData, bool Dummy, bool Force)
 		int Ret = m_Controls.SnapInput(pData);
 		if(m_Tas.IsRecordingActive() && !m_FastPractice.Enabled())
 			m_Tas.OnRecordInput(pData, Conn == 1);
+		// bestclient: Avoid runs after TAS so that a recorded track always stays bit exact,
+		// and only ever on the connection the player is actually controlling.
+		if(Ret > 0)
+			m_Avoid.ApplyInput(pData, Ret, Conn == 1);
+		// bestclient
 		return Ret;
 	}
 	if(m_aLocalIds[!g_Config.m_ClDummy] < 0)
