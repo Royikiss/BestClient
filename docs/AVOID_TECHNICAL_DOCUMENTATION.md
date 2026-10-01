@@ -29,6 +29,10 @@
 
 **阶段二任务书已经写好在 [附录 A](#附录-a阶段二任务书可直接交给下一个-ai)，可以整体复制给下一个 AI。**
 
+> 建议按切片推进：**先做 [`docs/AVOID_STAGE2_BASIC_PROMPT.md`](AVOID_STAGE2_BASIC_PROMPT.md)**
+> （Basic 模式的方向键制动 + 前向模拟器，覆盖三条验收里的前两条），
+> 完成后再整体交附录 A 的任务书（钩子释放、MCTS、NSIF、Track Point）。
+
 ---
 
 ## 0. 本阶段交付边界（先读这一节）
