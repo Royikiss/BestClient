@@ -9,8 +9,8 @@
 // the tests below pin down both halves of that contract:
 //
 //   1. a wider radius reacts further away from the hazard, and
-//   2. the smallest radius the cvar allows still leaves room for the whole braking distance,
-//      so the lower half of the slider stays usable instead of fatal.
+//   2. the radius is measured to the hazard tile *box* with half tile steps, so the low end of the
+//      slider (0.5) really is "almost off" while one tile still brakes in time.
 //
 // The geometry is built in memory rather than taken from a shipped map: the numbers have to be
 // exact for a distance assertion to mean anything, and depending on level layout would make the
@@ -109,17 +109,33 @@ namespace
 		return false;
 	}
 
-	// The tile-centre scan CAvoid::ScanThreat() performs, limited to `Radius` tiles. This is the gate
-	// the decision engine consults through `Ctx.m_Threat.m_HasNearest`.
-	bool ScanFindsHazard(const CCollision &Collision, vec2 Pos, int Radius)
+	// Distance from a point to the box of one tile, exactly like Avoid::DistanceToTileBox().
+	float DistanceToTileBox(vec2 Pos, int TileX, int TileY)
+	{
+		const float Left = TileX * 32.0f;
+		const float Top = TileY * 32.0f;
+		const vec2 Closest(
+			std::clamp(Pos.x, Left, Left + 32.0f),
+			std::clamp(Pos.y, Top, Top + 32.0f));
+		return distance(Pos, Closest);
+	}
+
+	// The tile-centre scan CAvoid::ScanThreat() performs: it examines the integer square that
+	// covers `Radius` tiles and keeps the hazard tiles whose box is within `Radius` tiles. This is
+	// the gate the decision engine consults through `Ctx.m_Threat.m_HasNearest`.
+	bool ScanFindsHazard(const CCollision &Collision, vec2 Pos, float Radius)
 	{
 		const int CenterX = (int)std::floor(Pos.x / 32.0f);
 		const int CenterY = (int)std::floor(Pos.y / 32.0f);
-		for(int Ty = CenterY - Radius; Ty <= CenterY + Radius; Ty++)
+		const int Scan = (int)std::ceil(Radius);
+		const float Reach = Radius * 32.0f;
+		for(int Ty = CenterY - Scan; Ty <= CenterY + Scan; Ty++)
 		{
-			for(int Tx = CenterX - Radius; Tx <= CenterX + Radius; Tx++)
+			for(int Tx = CenterX - Scan; Tx <= CenterX + Scan; Tx++)
 			{
-				if(IsDeathAt(Collision, vec2((Tx + 0.5f) * 32.0f, (Ty + 0.5f) * 32.0f)))
+				if(!IsDeathAt(Collision, vec2((Tx + 0.5f) * 32.0f, (Ty + 0.5f) * 32.0f)))
+					continue;
+				if(DistanceToTileBox(Pos, Tx, Ty) <= Reach)
 					return true;
 			}
 		}
@@ -317,7 +333,7 @@ namespace
 		// Walks the tee right and applies the decision rule of EvaluateBestPlan() on every tick:
 		// brake if the sensor sees a relevant hazard, otherwise keep going. `Radius` is the sensing
 		// radius under test.
-		SWalkResult WalkIntoTheHazard(int Radius, const CTuningParams &Tuning, int CheckTicks)
+		SWalkResult WalkIntoTheHazard(float Radius, const CTuningParams &Tuning, int CheckTicks)
 		{
 			SWalkResult Result;
 
@@ -362,18 +378,62 @@ namespace
 		}
 	};
 
-	// The tee is braked before it ever touches the hazard, at both ends of the slider.
+	// From one tile upwards the tee is braked before it ever touches the hazard, across the whole
+	// slider. The 0.5 setting is deliberately *not* in this list: it is the "almost off" end, see
+	// HalfATileIsTheAlmostOffEnd below.
 	TEST_F(CAvoidSensingRadiusTest, BrakesInTimeAcrossTheWholeRadiusRange)
 	{
 		const CTuningParams Tuning = MakeDefaultTuning();
 		constexpr int CheckTicks = 26;
 
-		for(int Radius = 2; Radius <= 16; Radius++)
+		for(int HalfTiles = 2; HalfTiles <= 32; HalfTiles++)
 		{
+			const float Radius = HalfTiles * 0.5f;
 			const SWalkResult Result = WalkIntoTheHazard(Radius, Tuning, CheckTicks);
 			EXPECT_TRUE(Result.m_SensorSawHazard) << "radius " << Radius << " never saw the hazard";
 			EXPECT_TRUE(Result.m_Survived) << "radius " << Radius << " braked too late";
 		}
+	}
+
+	// Half a tile is the new minimum of `bc_avoid_sensing_radius`: the agent only notices the pit
+	// once it is standing at the edge, so it cannot brake any more. That is the point of the
+	// setting - the player asked for "react as late as possible" - and it has to be *later* than
+	// one tile, otherwise the slider would lie.
+	TEST_F(CAvoidSensingRadiusTest, HalfATileIsTheAlmostOffEnd)
+	{
+		const CTuningParams Tuning = MakeDefaultTuning();
+		constexpr int CheckTicks = 26;
+
+		const SWalkResult Half = WalkIntoTheHazard(0.5f, Tuning, CheckTicks);
+		const SWalkResult One = WalkIntoTheHazard(1.0f, Tuning, CheckTicks);
+
+		ASSERT_TRUE(Half.m_SensorSawHazard) << "a hazard right in front of the tee must still be seen";
+		ASSERT_TRUE(One.m_Survived);
+		EXPECT_GT(One.m_ReactionGap, Half.m_ReactionGap + 16.0f)
+			<< "half a tile has to react visibly later than one tile";
+
+		// Half a tile is inside the braking distance: the agent sees the pit, but the tee is
+		// already too close to stop. Documented in the delivery document, 6.7.
+		const float AvailableTicks = Half.m_ReactionGap / Tuning.m_GroundControlSpeed;
+		EXPECT_LT(AvailableTicks, 5.0f) << "half a tile should be too late to brake";
+	}
+
+	// The reach is measured to the hazard box, so it does not grow by a whole tile in every
+	// direction when the slider moves by one: half tile steps are real steps.
+	TEST_F(CAvoidSensingRadiusTest, HalfTileStepsAreRealSteps)
+	{
+		const CTuningParams Tuning = MakeDefaultTuning();
+		constexpr int CheckTicks = 26;
+
+		const SWalkResult Two = WalkIntoTheHazard(2.0f, Tuning, CheckTicks);
+		const SWalkResult TwoAndAHalf = WalkIntoTheHazard(2.5f, Tuning, CheckTicks);
+		const SWalkResult Three = WalkIntoTheHazard(3.0f, Tuning, CheckTicks);
+
+		ASSERT_TRUE(Two.m_Survived);
+		ASSERT_TRUE(TwoAndAHalf.m_Survived);
+		ASSERT_TRUE(Three.m_Survived);
+		EXPECT_GT(TwoAndAHalf.m_ReactionGap, Two.m_ReactionGap);
+		EXPECT_GT(Three.m_ReactionGap, TwoAndAHalf.m_ReactionGap);
 	}
 
 	// This is the regression for the wiring bug: a bigger radius has to react further out.
@@ -382,8 +442,8 @@ namespace
 		const CTuningParams Tuning = MakeDefaultTuning();
 		constexpr int CheckTicks = 26;
 
-		const SWalkResult Narrow = WalkIntoTheHazard(2, Tuning, CheckTicks);
-		const SWalkResult Wide = WalkIntoTheHazard(6, Tuning, CheckTicks);
+		const SWalkResult Narrow = WalkIntoTheHazard(2.0f, Tuning, CheckTicks);
+		const SWalkResult Wide = WalkIntoTheHazard(6.0f, Tuning, CheckTicks);
 
 		ASSERT_TRUE(Narrow.m_Survived);
 		ASSERT_TRUE(Wide.m_Survived);
@@ -404,7 +464,7 @@ namespace
 		const CTuningParams Tuning = MakeDefaultTuning();
 		constexpr int CheckTicks = 26;
 
-		const SWalkResult Narrow = WalkIntoTheHazard(2, Tuning, CheckTicks);
+		const SWalkResult Narrow = WalkIntoTheHazard(2.0f, Tuning, CheckTicks);
 		ASSERT_TRUE(Narrow.m_Survived);
 		ASSERT_TRUE(Narrow.m_SensorSawHazard);
 
@@ -427,8 +487,8 @@ namespace
 		const CTuningParams Tuning = MakeDefaultTuning();
 		constexpr int CheckTicks = 26;
 
-		const SWalkResult Mid = WalkIntoTheHazard(8, Tuning, CheckTicks);
-		const SWalkResult Huge = WalkIntoTheHazard(16, Tuning, CheckTicks);
+		const SWalkResult Mid = WalkIntoTheHazard(8.0f, Tuning, CheckTicks);
+		const SWalkResult Huge = WalkIntoTheHazard(16.0f, Tuning, CheckTicks);
 
 		ASSERT_TRUE(Mid.m_Survived);
 		ASSERT_TRUE(Huge.m_Survived);
@@ -440,3 +500,4 @@ namespace
 		EXPECT_NEAR(Mid.m_ReactionGap, Huge.m_ReactionGap, 2 * 32.0f);
 	}
 } // namespace
+
