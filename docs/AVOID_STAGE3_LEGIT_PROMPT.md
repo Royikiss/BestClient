@@ -3,6 +3,12 @@
 > 用法：把下面 `====` 之间的整段内容原样发给下一个 AI（或直接说“读 `docs/AVOID_STAGE3_LEGIT_PROMPT.md` 并执行”）。
 >
 > 前置状态：**Basic 模式已交付并验收通过（v1.1.1）**。不要重写 Basic，不要动它的验收行为。
+>
+> **状态（2026-10-02）：本档已交付（v1.2.0）。**
+> 实现说明见 [`AVOID_TECHNICAL_DOCUMENTATION.md` 6.8](AVOID_TECHNICAL_DOCUMENTATION.md#68-legit-代理实现说明v120)，
+> 游戏内验收见 [8.3b](AVOID_TECHNICAL_DOCUMENTATION.md#83b-legit-代理验收v120-起)，
+> 交付报告见 [`AVOID_STAGE3_LEGIT_REPORT.md`](AVOID_STAGE3_LEGIT_REPORT.md)。
+> 本任务书保留作为记录，不要再重复执行。
 
 ====
 
