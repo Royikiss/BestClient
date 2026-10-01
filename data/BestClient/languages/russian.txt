@@ -3191,3 +3191,54 @@ Pilot
 debug override (input pipeline self-test)
 == отладка: перехват (самотест ввода)
 
+[BestClient]
+no map data
+== нет данных карты
+
+[BestClient]
+frozen, agent idle
+== заморожен, агент бездействует
+
+[BestClient]
+player input safe
+== ввод игрока безопасен
+
+[BestClient]
+still time before the hazard
+== время до опасности ещё есть
+
+[BestClient]
+nothing evaluated
+== нечего оценивать
+
+[BestClient]
+no safer direction
+== нет более безопасного направления
+
+[BestClient]
+brake before hazard
+== торможение перед опасностью
+
+[BestClient]
+steer left before hazard
+== влево перед опасностью
+
+[BestClient]
+steer right before hazard
+== вправо перед опасностью
+
+[BestClient]
+NSIF: brake before hazard
+== NSIF: торможение перед опасностью
+
+[BestClient]
+NSIF: steer left before hazard
+== NSIF: влево перед опасностью
+
+[BestClient]
+NSIF: steer right before hazard
+== NSIF: вправо перед опасностью
+
+[BestClient]
+no hazard within sensing range
+== в радиусе обзора нет опасности

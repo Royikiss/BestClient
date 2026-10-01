@@ -4,6 +4,7 @@
 #include <base/math.h>
 #include <base/mem.h>
 #include <base/str.h>
+#include <base/time.h>
 
 #include <engine/client.h>
 #include <engine/graphics.h>
@@ -517,6 +518,8 @@ void CAvoid::ApplyInput(int *pData, int Size, bool Dummy)
 			m_Telemetry.m_Overrides++;
 		if(Plan.m_UsedFallback)
 			m_Telemetry.m_NsifFallbacks++;
+		if(g_Config.m_BcAvoidLog)
+			LogTrace(Plan.m_aReason, Ctx, Plan.m_SafeTicks, Ctx.m_Settings.m_CheckTicks, Plan);
 	}
 	else if(!IsArmed())
 	{
@@ -568,52 +571,127 @@ void CAvoid::UpdateTelemetry(const SContext &Ctx, const SInputPlan &Plan)
 }
 
 // ---------------------------------------------------------------------------------------------
-// Decision engine - STAGE 2 SLOT
+// Decision engine: stage 2 - Basic agent (forward simulator + direction braking)
 // ---------------------------------------------------------------------------------------------
+
+int CAvoid::SimulateInput(const SContext &Ctx, const CNetObj_PlayerInput &Input, int MaxTicks,
+	vec2 *pOutPos, vec2 *pOutVel)
+{
+	// The collision context of the live map. `CCollision` is shared by the game world, the TAS
+	// practice sandbox and the sensor layer, so the clone runs on exactly the geometry the real
+	// tee does. The simulation can never affect the real tee: `CCharacterCore` has no back
+	// pointer into the entity, and `DoDeferredTick = false` keeps the player-collision pass out.
+	CCollision *pCollision = Collision();
+	if(!pCollision)
+		return 0;
+
+	const int Depth = std::clamp(MaxTicks, 0, MAX_SIM_TICKS);
+	if(Depth <= 0)
+		return 0;
+
+	// The clone needs the world and the teams core as well, because `CCharacterCore::Tick()` asks
+	// the collision layer for the switch state of its own tile (`IsSwitchActiveCb` dereferences
+	// both). Inside the TAS practice sandbox the active world is the sandbox, not the live one.
+	CWorldCore *pWorld = nullptr;
+	CTeamsCore *pTeams = nullptr;
+	if(GameClient()->m_FastPractice.Active())
+	{
+		pWorld = &GameClient()->m_FastPractice.PracticeWorld().m_Core;
+		pTeams = GameClient()->m_FastPractice.PracticeWorld().Teams();
+	}
+	else
+	{
+		pWorld = &GameClient()->m_GameWorld.m_Core;
+		pTeams = GameClient()->m_GameWorld.Teams();
+	}
+
+	// Start from a core in the documented reset state, then carry over everything the tick loop
+	// actually reads. Going through `Reset()` also parks `m_pWorld` / `m_pTeams` at null, so this
+	// function stays correct even if the collision pointer above ever goes missing.
+	CCharacterCore Sim;
+	Sim.Reset();
+	Sim.SetCoreWorld(pWorld, pCollision, pTeams);
+	Sim.m_Pos = Ctx.m_Core.m_Pos;
+	Sim.m_Vel = Ctx.m_Core.m_Vel;
+	Sim.m_HookPos = Ctx.m_Core.m_HookPos;
+	Sim.m_HookDir = Ctx.m_Core.m_HookDir;
+	Sim.m_HookTeleBase = Ctx.m_Core.m_HookTeleBase;
+	Sim.m_HookTick = Ctx.m_Core.m_HookTick;
+	Sim.m_HookState = Ctx.m_Core.m_HookState;
+	Sim.m_NewHook = Ctx.m_Core.m_NewHook;
+	Sim.m_Jumped = Ctx.m_Core.m_Jumped;
+	Sim.m_JumpedTotal = Ctx.m_Core.m_JumpedTotal;
+	Sim.m_Jumps = Ctx.m_Core.m_Jumps;
+	Sim.m_Direction = Ctx.m_Core.m_Direction;
+	Sim.m_Angle = Ctx.m_Core.m_Angle;
+	Sim.m_TriggeredEvents = Ctx.m_Core.m_TriggeredEvents;
+	Sim.m_FreezeStart = Ctx.m_Core.m_FreezeStart;
+	Sim.m_FreezeEnd = Ctx.m_Core.m_FreezeEnd;
+	Sim.m_IsInFreeze = Ctx.m_Core.m_IsInFreeze;
+	Sim.m_DeepFrozen = Ctx.m_Core.m_DeepFrozen;
+	Sim.m_LiveFrozen = Ctx.m_Core.m_LiveFrozen;
+	Sim.m_CollisionDisabled = Ctx.m_Core.m_CollisionDisabled;
+	Sim.m_Solo = Ctx.m_Core.m_Solo;
+	Sim.m_Super = Ctx.m_Core.m_Super;
+	Sim.m_Invincible = Ctx.m_Core.m_Invincible;
+	// Map tuning, never hard-coded constants: on a `tune` map the physics is driven entirely by
+	// this struct, and guessing gravity / control accel here would drift the whole prediction.
+	Sim.m_Tuning = Ctx.m_Core.m_Tuning;
+	// `CCharacterCore::Tick()` asks `IsSwitchActiveCb` for the switch state of the tile the tee
+	// stands on, and that callback dereferences both the world and the teams core (the clone has
+	// both). A neutral but non-negative id keeps the clone out of every team decision, and the
+	// clone is not registered in `m_pWorld->m_apCharacters`, so it can never drag on a real player.
+	Sim.m_Id = 0;
+
+	Sim.m_Input = Input;
+
+	int Safe = 0;
+	while(Safe < Depth)
+	{
+		Sim.Tick(true, false);
+		Sim.Move();
+
+		// Exactly the stage 1 probe rules, so "the sensor says dangerous" and "the physics says
+		// dangerous" can never drift apart.
+		if(IsRelevantHazard(ClassifyPoint(Sim.m_Pos)))
+			break;
+		Safe++;
+	}
+
+	if(pOutPos)
+		*pOutPos = Sim.m_Pos;
+	if(pOutVel)
+		*pOutVel = Sim.m_Vel;
+	return Safe;
+}
+
+void CAvoid::LogTrace(const char *pTag, const SContext &Ctx, int SafeTicks, int Limit, const SInputPlan &Plan) const
+{
+	// `bc_avoid_log 1` prints one line per decision: the player's phase space, the hazard verdict
+	// at the tee, how long the player's own input survives and what the agent answered. Walking
+	// the tee along a wall of death tiles and watching the `safe` column drop is the calibration
+	// procedure for the simulator (see the delivery document, 6.6 step 1).
+	char aBuf[256];
+	str_format(aBuf, sizeof(aBuf), "[avoid] tick %d  pos (%.1f, %.1f) tiles  vel (%.1f, %.1f)  threat %s  hazard %s  player safe %d/%d  override %s  safe %d  reason %s",
+		Ctx.m_Tick, Ctx.m_Core.m_Pos.x / TILE_SIZE, Ctx.m_Core.m_Pos.y / TILE_SIZE,
+		Ctx.m_Core.m_Vel.x, Ctx.m_Core.m_Vel.y,
+		Ctx.m_Threat.m_HasNearest ? HazardName(Ctx.m_Threat.m_Flags) : "CLEAR",
+		Ctx.m_Threat.m_OnHazard ? "yes" : "no",
+		SafeTicks, Limit, Plan.m_Override ? "yes" : "no", Plan.m_SafeTicks, pTag);
+	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "avoid", aBuf);
+}
 
 CAvoid::SInputPlan CAvoid::EvaluateBestPlan(const SContext &Ctx)
 {
 	SInputPlan Plan;
 	Plan.m_Input = Ctx.m_Input;
 
-	// ============================================================================================
-	// STAGE 2 IMPLEMENTATION SLOT
-	//
-	// This is the only intentionally empty part of the Avoid module. The behaviour that has to be
-	// reproduced here is:
-	//
-	//   * Simulate the player's own input for `Ctx.m_Settings.m_CheckTicks` ticks.
-	//     - If it survives the whole window, do nothing (return m_Override = false): the player
-	//       keeps full control, which is what makes the bot feel invisible.
-	//     - If it dies earlier than `m_KickInTicks`, search for a replacement input.
-	//   * The search generates candidate inputs (direction -1/0/1 x jump 0/1 x hook 0/1 x a small
-	//     set of aim angles), scores them with
-	//         score = m_LifeWeight  * (survived ticks)
-	//               - m_DirectionWeight * (distance from the intended direction)
-	//               - m_HookWeight      * (hook state changed)
-	//               - m_Randomness      * exploration term,
-	//     and returns the best one.
-	//   * When nothing survives `CheckTicks`, NSIF (`m_Nsif`) replays the first step of the best
-	//     plan found so far and sets `m_UsedFallback`.
-	//
-	// Everything needed is already in `Ctx`:
-	//     Ctx.m_Core        - the tee's live CCharacterCore (pos/vel/hook/freeze state)
-	//     Ctx.m_Input       - the input the player is about to send
-	//     Ctx.m_Threat      - pre-computed hazard scan (flags, nearest hazard, on-hazard)
-	//     Ctx.m_Settings    - the full configuration snapshot
-	// and the physics can be advanced with a temporary CCharacterCore + CCollision, or by cloning
-	// the entity inside `GameClient()->m_FastPractice.PracticeWorld()`.
-	//
-	// Keep the interface as it is: fill `Plan` and return it.
-	// ============================================================================================
-
 	// --------------------------------------------------------------------------------------------
 	// Stage 1 input pipeline self-test (`bc_avoid_debug_override`).
 	//
-	// The decision engine below is empty, so this switch is the only way to prove end to end that
-	// the interception really steers the tee: it takes over every tick and inverts the left/right
-	// input. Hold D and the tee walks left, on your screen and on the server, because `pData` is
-	// the buffer the prediction and the network packet are both built from.
+	// It takes over every tick and inverts the left/right input. Hold D and the tee walks left, on
+	// your screen and on the server, because `pData` is the buffer the prediction and the network
+	// packet are both built from.
 	// --------------------------------------------------------------------------------------------
 	if(g_Config.m_BcAvoidDebugOverride)
 	{
@@ -629,6 +707,11 @@ CAvoid::SInputPlan CAvoid::EvaluateBestPlan(const SContext &Ctx)
 		return Plan;
 	}
 
+	const int64_t StartTime = time_get();
+
+	const SSettings &Set = Ctx.m_Settings;
+	const int CheckTicks = std::clamp(Set.m_CheckTicks, 2, MAX_SIM_TICKS);
+
 	Plan.m_Override = false;
 	Plan.m_UsedFallback = false;
 	Plan.m_SafeTicks = 0;
@@ -636,8 +719,144 @@ CAvoid::SInputPlan CAvoid::EvaluateBestPlan(const SContext &Ctx)
 	Plan.m_Candidates = 0;
 	Plan.m_Score = 0.0f;
 	Plan.m_CostMs = 0.0f;
-	str_copy(Plan.m_aReason, BcLocalize("engine pending (stage 2)"));
-	return Plan;
+	Plan.m_aReason[0] = '\0';
+
+	auto Finish = [&](const char *pReason) {
+		str_copy(Plan.m_aReason, pReason);
+		Plan.m_CostMs = (float)((time_get() - StartTime) * 1000.0 / (double)time_freq());
+		return Plan;
+	};
+
+	// Nothing can be predicted without a map; stay out of the way and say so on the HUD instead of
+	// guessing.
+	if(!Collision() || Collision()->GetWidth() <= 0 || Collision()->GetHeight() <= 0)
+		return Finish(BcLocalize("no map data"));
+
+	// Being frozen, deep frozen or live frozen right now is a state, not a tile: no input can
+	// change it, so the agent has nothing to contribute (see the delivery document, 6.5 point 4).
+	if(Ctx.m_Threat.m_Flags & HAZ_SELF)
+		return Finish(BcLocalize("frozen, agent idle"));
+
+	// --------------------------------------------------------------------------------------------
+	// 0. Sensor range gate: `bc_avoid_sensing_radius` decides how far the agent is allowed to look,
+	//    and therefore how early it may react.
+	//
+	//    The forward simulator deliberately has no range limit of its own - it advances the tee and
+	//    asks `ClassifyPoint()` about wherever it ends up. That makes the *physics* prediction
+	//    exact, but it would also let the agent react to hazards far outside the sensing radius, so
+	//    the radius has to gate the engine explicitly.
+	//
+	//    `ScanThreat()` only sets `m_HasNearest` for a tile that `IsRelevantHazard()` accepts, so
+	//    this single flag already folds in `bc_avoid_sensing_radius` and every `bc_avoid_tile_*`
+	//    switch: raise the radius and the tee is braked earlier, lower it and the agent holds off
+	//    until the hazard is closer.
+	// --------------------------------------------------------------------------------------------
+	if(Set.m_SensingRadius > 0 && !Ctx.m_Threat.m_HasNearest)
+		return Finish(BcLocalize("no hazard within sensing range"));
+
+	// --------------------------------------------------------------------------------------------
+	// 1. Fast path: does the input the player is about to send stay safe on its own?
+	//    This decides the whole feel of the module - any tick that lands here is a tick the player
+	//    never notices the agent exists.
+	// --------------------------------------------------------------------------------------------
+	const int PlayerSafe = SimulateInput(Ctx, Ctx.m_Input, CheckTicks);
+	Plan.m_SafeTicks = PlayerSafe;
+	Plan.m_ScannedTicks = CheckTicks;
+
+	if(PlayerSafe >= CheckTicks)
+		return Finish(BcLocalize("player input safe"));
+
+	// 2. Kick-in: the player's input still survives long enough, so do not touch it yet. This is
+	//    what keeps the agent from hovering over every tee that walks past a hazard.
+	const int KickIn = std::clamp(Set.m_KickInTicks, 0, MAX_SIM_TICKS);
+	if(PlayerSafe >= KickIn)
+		return Finish(BcLocalize("still time before the hazard"));
+
+	// 3. Basic candidate set: the three direction keys. The player's own direction is always in
+	//    the set, so "do nothing" is a real option and the search can never report that nothing was
+	//    evaluated; `bc_avoid_direction_assist` narrows it back to that single option.
+	int aDirections[3];
+	int NumDirections = 0;
+	aDirections[NumDirections++] = std::clamp(Ctx.m_Input.m_Direction, -1, 1);
+	if(Set.m_DirectionAssist)
+	{
+		for(int Dir = -1; Dir <= 1; ++Dir)
+		{
+			if(Dir != aDirections[0])
+				aDirections[NumDirections++] = Dir;
+		}
+	}
+
+	// Basic never touches the hook, the jump key or the aim: every candidate is the player's own
+	// input with nothing but `m_Direction` replaced.
+	CNetObj_PlayerInput Candidate = Ctx.m_Input;
+	// The first sample always wins the initial comparison, whatever the weights are: with
+	// `life_weight = 0` and a non-zero direction weight the scores can legitimately go negative.
+	bool HasBest = false;
+	int BestSafe = 0;
+	int BestDir = Ctx.m_Input.m_Direction;
+	float BestScore = 0.0f;
+
+	const int SampleCount = std::min(NumDirections, MAX_CANDIDATES);
+	for(int i = 0; i < SampleCount; ++i)
+	{
+		Candidate.m_Direction = aDirections[i];
+		const int Safe = SimulateInput(Ctx, Candidate, CheckTicks);
+
+		SSample &Sample = m_aSamples[i];
+		Sample.m_Direction = aDirections[i];
+		Sample.m_SafeTicks = Safe;
+		// Survival is the objective; the direction weight only breaks ties between plans that live
+		// equally long, which is what keeps the braking as short as the situation allows.
+		Sample.m_Score = Set.m_LifeWeight * Safe - Set.m_DirectionWeight * std::abs(aDirections[i] - Ctx.m_Input.m_Direction);
+
+		Plan.m_Candidates++;
+		Plan.m_ScannedTicks = std::max(Plan.m_ScannedTicks, Safe);
+		if(!HasBest || Sample.m_Score > BestScore)
+		{
+			HasBest = true;
+			BestSafe = Safe;
+			BestDir = aDirections[i];
+			BestScore = Sample.m_Score;
+		}
+	}
+
+	if(!HasBest)
+		return Finish(BcLocalize("nothing evaluated"));
+
+	const bool SafeEnough = BestSafe >= CheckTicks;
+	const bool Gained = BestSafe > PlayerSafe;
+
+	// A full window is always taken; otherwise the player's own input stays in charge unless
+	// another option genuinely survives longer. Ties therefore resolve to "do not intervene".
+	if(!(SafeEnough || (Gained && BestDir != Ctx.m_Input.m_Direction)))
+		return Finish(BcLocalize("no safer direction"));
+
+	Plan.m_Override = true;
+	Plan.m_SafeTicks = BestSafe;
+	Plan.m_Score = BestScore;
+	Plan.m_Input.m_Direction = BestDir;
+	// NSIF: the usual case here is "standing next to a hazard is already unavoidable"; the best
+	// first step found so far is replayed, and the HUD says so through the red badge.
+	Plan.m_UsedFallback = !SafeEnough;
+
+	if(!SafeEnough)
+	{
+		if(BestDir == 0)
+			str_copy(Plan.m_aReason, BcLocalize("NSIF: brake before hazard"));
+		else
+			str_copy(Plan.m_aReason, BestDir < 0 ? BcLocalize("NSIF: steer left before hazard") : BcLocalize("NSIF: steer right before hazard"));
+	}
+	else if(BestDir == 0)
+	{
+		str_copy(Plan.m_aReason, BcLocalize("brake before hazard"));
+	}
+	else
+	{
+		str_copy(Plan.m_aReason, BestDir < 0 ? BcLocalize("steer left before hazard") : BcLocalize("steer right before hazard"));
+	}
+
+	return Finish(Plan.m_aReason);
 }
 
 // ---------------------------------------------------------------------------------------------

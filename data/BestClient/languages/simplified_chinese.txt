@@ -3191,3 +3191,54 @@ Pilot
 debug override (input pipeline self-test)
 == 调试接管 (输入管线自检)
 
+[BestClient]
+no map data
+== 无地图数据
+
+[BestClient]
+frozen, agent idle
+== 已冻结，代理待机
+
+[BestClient]
+player input safe
+== 玩家输入安全
+
+[BestClient]
+still time before the hazard
+== 距离危险仍有时间
+
+[BestClient]
+nothing evaluated
+== 无可评估方案
+
+[BestClient]
+no safer direction
+== 没有更安全的方向
+
+[BestClient]
+brake before hazard
+== 在危险前刹停
+
+[BestClient]
+steer left before hazard
+== 在危险前向左减速
+
+[BestClient]
+steer right before hazard
+== 在危险前向右减速
+
+[BestClient]
+NSIF: brake before hazard
+== 自救：在危险前刹停
+
+[BestClient]
+NSIF: steer left before hazard
+== 自救：向左减速
+
+[BestClient]
+NSIF: steer right before hazard
+== 自救：向右减速
+
+[BestClient]
+no hazard within sensing range
+== 感知范围内无危险

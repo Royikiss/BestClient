@@ -25,10 +25,11 @@ class CCharacter;
  *   - the in-game status HUD and the world-space threat overlay,
  *   - the "Avoid" page of the TAS& menu.
  *
- * STAGE 2 must implement the actual decision engine inside CAvoid::EvaluateBestPlan().
- * That function is the ONLY intentionally empty slot: everything the engine needs arrives
- * through SContext, and everything it produces is consumed through SInputPlan. Do not add
- * new plumbing - fill in the search, keep the interface untouched.
+ * STAGE 2 (current revision) fills the decision engine with the Basic agent: a forward simulator
+ * built on a cloned CCharacterCore, plus a three candidate direction search (left / keep / right).
+ * It only ever rewrites `m_Input.m_Direction`; hook, jump, fire and aim stay exactly as the player
+ * sent them. Legit / Blatant (hook release, MCTS, NSIF candidate search, aimbot) are still to come
+ * and reuse the same SimulateInput().
  * ------------------------------------------------------------------------------------------- */
 class CAvoid : public CComponent
 {
@@ -200,7 +201,11 @@ public:
 	const STelemetry &Telemetry() const { return m_Telemetry; }
 	bool IsHudVisible() const;
 
-	// --- decision engine: STAGE 2 SLOT ----------------------------------------------------------
+	// --- decision engine (stage 2) --------------------------------------------------------------
+	// Basic mode only rewrites `m_Direction`; the remaining candidate plans of the later agents
+	// (jump / hook / aim) will slot into the same simulation loop.
+	static constexpr int MAX_CANDIDATES = 8;
+	static constexpr int MAX_SIM_TICKS = 50;
 	SInputPlan EvaluateBestPlan(const SContext &Ctx);
 
 	static const char *StateName(int State);
@@ -215,6 +220,24 @@ private:
 	int m_LastDecisionTick = -1;
 	int m_LastInputTick = -1;
 	int m_IdleTicks = 0;
+
+	// Stage 2 forward simulator. Clones the live CCharacterCore and advances it with the real
+	// DDNet core physics, so it needs no world of its own. Returns the number of ticks the
+	// candidate survives (== MaxTicks when the whole window is safe) and, optionally, the final
+	// position and velocity for debugging.
+	struct SSample
+	{
+		int m_Direction = 0;
+		int m_SafeTicks = 0;
+		float m_Score = 0.0f;
+	};
+	// Per candidate results of the current decision, held in a fixed member buffer so that the
+	// decision path never allocates. Cleared in OnReset().
+	SSample m_aSamples[MAX_CANDIDATES]{};
+
+	int SimulateInput(const SContext &Ctx, const CNetObj_PlayerInput &Input, int MaxTicks,
+		vec2 *pOutPos = nullptr, vec2 *pOutVel = nullptr);
+	void LogTrace(const char *pTag, const SContext &Ctx, int SafeTicks, int Limit, const SInputPlan &Plan) const;
 
 	const CCharacterCore *ActiveCore(int *pClientId, bool *pIsDummy) const;
 	SSettings ReadSettings() const;
