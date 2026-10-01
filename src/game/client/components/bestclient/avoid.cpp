@@ -16,6 +16,7 @@
 #include <game/client/gameclient.h>
 #include <game/client/prediction/entities/character.h>
 #include <game/client/ui.h>
+#include <game/collision.h>
 #include <game/localization.h>
 #include <game/mapitems.h>
 
@@ -24,60 +25,47 @@
 
 namespace
 {
-// Death tiles are probed at the four corners of a smaller box, exactly like
-// CCharacter::HandleSkippableTiles() does. CCharacterCore::PhysicalSize() is 28px,
-// so the probe offset is 28 / 3.
-constexpr float HAZARD_CORNER_PROBE = CCharacterCore::PhysicalSize() / 3.0f;
+	// The tile size the HUD, the overlay and the telemetry work in.
+	constexpr float TILE_SIZE = 32.0f;
 
-constexpr float TILE_SIZE = 32.0f;
+	// In-game HUD panel geometry, expressed in the 300 units tall HUD canvas that every
+	// HudLayout module lives in (see HudLayout::CANVAS_HEIGHT).
+	constexpr float HUD_BASE_WIDTH = 122.0f;
+	constexpr float HUD_BASE_HEIGHT = 60.0f;
+	constexpr float HUD_PADDING = 3.0f;
+	constexpr float HUD_HEADER_HEIGHT = 9.0f;
+	constexpr float HUD_ROW_HEIGHT = 7.5f;
+	constexpr float HUD_FONT_HEADER = 5.5f;
+	constexpr float HUD_FONT_ROW = 5.0f;
+	constexpr float HUD_BADGE_WIDTH = 30.0f;
+	constexpr float HUD_LABEL_WIDTH = 40.0f;
 
-// In-game HUD panel geometry, expressed in the 300 units tall HUD canvas that every
-// HudLayout module lives in (see HudLayout::CANVAS_HEIGHT).
-constexpr float HUD_BASE_WIDTH = 122.0f;
-constexpr float HUD_BASE_HEIGHT = 60.0f;
-constexpr float HUD_PADDING = 3.0f;
-constexpr float HUD_HEADER_HEIGHT = 9.0f;
-constexpr float HUD_ROW_HEIGHT = 7.5f;
-constexpr float HUD_FONT_HEADER = 5.5f;
-constexpr float HUD_FONT_ROW = 5.0f;
-constexpr float HUD_BADGE_WIDTH = 30.0f;
-constexpr float HUD_LABEL_WIDTH = 40.0f;
-
-// Colour palette shared by the HUD and the world overlay.
-ColorRGBA HazardColor(int Flags)
-{
-	if(Flags & CAvoid::HAZ_DEATH)
-		return ColorRGBA(1.00f, 0.22f, 0.24f, 1.0f);
-	if(Flags & (CAvoid::HAZ_FREEZE | CAvoid::HAZ_DEEP | CAvoid::HAZ_LIVE))
-		return ColorRGBA(0.36f, 0.68f, 1.00f, 1.0f);
-	if(Flags & CAvoid::HAZ_UNFREEZE)
-		return ColorRGBA(0.35f, 1.00f, 0.85f, 1.0f);
-	if(Flags & CAvoid::HAZ_TELE)
-		return ColorRGBA(0.80f, 0.45f, 1.00f, 1.0f);
-	return ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
-}
-
-ColorRGBA StateColor(int State)
-{
-	switch(State)
+	// Colour palette shared by the HUD and the world overlay.
+	ColorRGBA HazardColor(int Flags)
 	{
-	case CAvoid::STATE_WATCHING: return ColorRGBA(0.25f, 0.85f, 0.45f, 1.0f);
-	case CAvoid::STATE_ASSISTING: return ColorRGBA(0.98f, 0.62f, 0.16f, 1.0f);
-	case CAvoid::STATE_NSIF: return ColorRGBA(0.95f, 0.28f, 0.30f, 1.0f);
-	case CAvoid::STATE_AFK: return ColorRGBA(0.55f, 0.55f, 0.60f, 1.0f);
-	default: return ColorRGBA(0.42f, 0.44f, 0.50f, 1.0f);
+		if(Flags & CAvoid::HAZ_DEATH)
+			return ColorRGBA(1.00f, 0.22f, 0.24f, 1.0f);
+		if(Flags & (CAvoid::HAZ_FREEZE | CAvoid::HAZ_DEEP | CAvoid::HAZ_LIVE))
+			return ColorRGBA(0.36f, 0.68f, 1.00f, 1.0f);
+		if(Flags & CAvoid::HAZ_UNFREEZE)
+			return ColorRGBA(0.35f, 1.00f, 0.85f, 1.0f);
+		if(Flags & CAvoid::HAZ_TELE)
+			return ColorRGBA(0.80f, 0.45f, 1.00f, 1.0f);
+		return ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
 	}
-}
 
-float DistanceToTileBox(vec2 Pos, int TileX, int TileY)
-{
-	const float Left = TileX * TILE_SIZE;
-	const float Top = TileY * TILE_SIZE;
-	const vec2 Closest(
-		std::clamp(Pos.x, Left, Left + TILE_SIZE),
-		std::clamp(Pos.y, Top, Top + TILE_SIZE));
-	return distance(Pos, Closest);
-}
+	ColorRGBA StateColor(int State)
+	{
+		switch(State)
+		{
+		case CAvoid::STATE_WATCHING: return ColorRGBA(0.25f, 0.85f, 0.45f, 1.0f);
+		case CAvoid::STATE_ASSISTING: return ColorRGBA(0.98f, 0.62f, 0.16f, 1.0f);
+		case CAvoid::STATE_NSIF: return ColorRGBA(0.95f, 0.28f, 0.30f, 1.0f);
+		case CAvoid::STATE_AFK: return ColorRGBA(0.55f, 0.55f, 0.60f, 1.0f);
+		default: return ColorRGBA(0.42f, 0.44f, 0.50f, 1.0f);
+		}
+	}
+
 } // namespace
 
 // ---------------------------------------------------------------------------------------------
@@ -189,6 +177,11 @@ void CAvoid::PrintStatus() const
 
 	str_format(aBuf, sizeof(aBuf), "[Avoid] last plan: %s", m_Telemetry.m_aReason[0] ? m_Telemetry.m_aReason : "<none>");
 	GameClient()->Echo(aBuf);
+
+	// Configuration trap from the delivery document (appendix F.4): with `kick_in_ticks` at or
+	// above `check_ticks` the agent can only ever act once the tee is already lost.
+	if(g_Config.m_BcAvoidKickInTicks >= g_Config.m_BcAvoidCheckTicks)
+		GameClient()->Echo(BcLocalize("warning: kick in ticks is not below check ticks, the agent will react late"));
 }
 
 CAvoid::SSettings CAvoid::ReadSettings() const
@@ -220,7 +213,8 @@ CAvoid::SSettings CAvoid::ReadSettings() const
 	S.m_AimbotMode = std::clamp(g_Config.m_BcAvoidAimbotMode, 0, 1);
 	S.m_AimbotSegments = std::clamp(g_Config.m_BcAvoidAimbotSegments, 4, 128);
 	S.m_AimbotFov = std::clamp(g_Config.m_BcAvoidAimbotFov, 10, 180);
-	S.m_SensingRadius = std::clamp(g_Config.m_BcAvoidSensingRadius, 2, 16);
+	// Stored in half tiles so the slider can go down to 0.5; the engine works in tiles.
+	S.m_SensingRadius = (float)std::clamp(g_Config.m_BcAvoidSensingRadius, 1, 32) * 0.5f;
 	return S;
 }
 
@@ -262,134 +256,30 @@ const char *CAvoid::HazardName(int Flags)
 
 int CAvoid::ClassifyTile(int Tile) const
 {
-	switch(Tile)
-	{
-	case TILE_DEATH: return HAZ_DEATH;
-	case TILE_FREEZE: return HAZ_FREEZE;
-	case TILE_DFREEZE: return HAZ_DEEP;
-	case TILE_LFREEZE: return HAZ_LIVE;
-	case TILE_UNFREEZE: return HAZ_UNFREEZE;
-	case TILE_TELEIN:
-	case TILE_TELEOUT:
-	case TILE_TELECHECK:
-	case TILE_TELECHECKIN:
-	case TILE_TELECHECKOUT:
-	case TILE_TELEINEVIL:
-	case TILE_TELECHECKINEVIL:
-	case TILE_TELEINWEAPON:
-	case TILE_TELEINHOOK:
-		return HAZ_TELE;
-	default:
-		return HAZ_NONE;
-	}
+	return Avoid::ClassifyTile(Tile);
 }
 
 int CAvoid::HazardMaskFromSettings() const
 {
-	int Mask = HAZ_NONE;
-	if(m_Settings.m_TileDeath)
-		Mask |= HAZ_DEATH;
-	if(m_Settings.m_TileFreeze)
-		Mask |= HAZ_FREEZE | HAZ_DEEP | HAZ_LIVE;
-	if(m_Settings.m_TileUnfreeze)
-		Mask |= HAZ_UNFREEZE;
-	if(m_Settings.m_TileTele)
-		Mask |= HAZ_TELE;
-	return Mask;
+	return Avoid::HazardMask(m_Settings);
 }
 
 bool CAvoid::IsRelevantHazard(int Flags) const
 {
-	// Being frozen right now is a state, not a tile: it always matters.
-	if(Flags & HAZ_SELF)
-		return true;
-	return (Flags & HazardMaskFromSettings()) != 0;
+	return Avoid::IsRelevantHazard(m_Settings, Flags);
 }
 
 int CAvoid::ClassifyPoint(vec2 Pos) const
 {
-	int Flags = HAZ_NONE;
-	// The tile helpers index straight into the collision arrays, so refuse to probe while no map
-	// is loaded (`GetPureMapIndex` would clamp against an empty grid, and `GetTileIndex` would
-	// dereference a null tile array).
-	if(!Collision() || Collision()->GetWidth() <= 0 || Collision()->GetHeight() <= 0)
-		return Flags;
-
-	// Centre probe: freeze family, unfreeze, teleport and death switches.
-	// Mirrors CCharacter::HandleTiles().
-	const int Index = Collision()->GetPureMapIndex(Pos);
-	if(Index >= 0)
-	{
-		Flags |= ClassifyTile(Collision()->GetTileIndex(Index));
-		Flags |= ClassifyTile(Collision()->GetFrontTileIndex(Index));
-		Flags |= ClassifyTile(Collision()->GetSwitchType(Index));
-	}
-
-	// Corner probe: death tiles, mirrors CCharacter::HandleSkippableTiles().
-	const float R = HAZARD_CORNER_PROBE;
-	for(int Corner = 0; Corner < 4; ++Corner)
-	{
-		const float Px = Pos.x + ((Corner & 1) ? R : -R);
-		const float Py = Pos.y + ((Corner & 2) ? R : -R);
-		if(Collision()->GetCollisionAt(Px, Py) == TILE_DEATH ||
-			Collision()->GetFrontCollisionAt(Px, Py) == TILE_DEATH)
-		{
-			Flags |= HAZ_DEATH;
-			break;
-		}
-		const int CornerIndex = Collision()->GetPureMapIndex(vec2(Px, Py));
-		if(CornerIndex >= 0 && Collision()->GetSwitchType(CornerIndex) == TILE_DEATH)
-		{
-			Flags |= HAZ_DEATH;
-			break;
-		}
-	}
-
-	return Flags;
+	// The probe rules live in avoid_engine.cpp: one implementation, used by the HUD readout, the
+	// decision engine and the unit tests. A second copy here is exactly the drift this module was
+	// built to avoid.
+	return Avoid::ClassifyPoint(Collision(), Pos);
 }
 
 CAvoid::SThreat CAvoid::ScanThreat(const CCharacterCore &Core) const
 {
-	SThreat Threat;
-	if(!Collision() || Collision()->GetWidth() <= 0 || Collision()->GetHeight() <= 0)
-		return Threat;
-
-	const vec2 Pos = Core.m_Pos;
-
-	if(Core.m_FreezeEnd != 0 || Core.m_DeepFrozen || Core.m_LiveFrozen)
-		Threat.m_Flags |= HAZ_SELF;
-
-	Threat.m_Flags |= ClassifyPoint(Pos);
-
-	const int Radius = std::clamp(m_Settings.m_SensingRadius, 2, 16);
-	const int CenterX = (int)std::floor(Pos.x / TILE_SIZE);
-	const int CenterY = (int)std::floor(Pos.y / TILE_SIZE);
-
-	for(int Ty = CenterY - Radius; Ty <= CenterY + Radius; ++Ty)
-	{
-		for(int Tx = CenterX - Radius; Tx <= CenterX + Radius; ++Tx)
-		{
-			Threat.m_SensedTiles++;
-
-			const vec2 TileCenter((Tx + 0.5f) * TILE_SIZE, (Ty + 0.5f) * TILE_SIZE);
-			const int Flags = ClassifyPoint(TileCenter);
-			if(Flags == HAZ_NONE || !IsRelevantHazard(Flags))
-				continue;
-
-			Threat.m_HazardTiles++;
-
-			const float Dist = DistanceToTileBox(Pos, Tx, Ty);
-			if(!Threat.m_HasNearest || Dist < Threat.m_NearestDistPx)
-			{
-				Threat.m_HasNearest = true;
-				Threat.m_NearestDistPx = Dist;
-				Threat.m_NearestPos = TileCenter;
-			}
-		}
-	}
-
-	Threat.m_OnHazard = IsRelevantHazard(Threat.m_Flags);
-	return Threat;
+	return Avoid::ScanThreat(Collision(), m_Settings, Core);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -574,95 +464,86 @@ void CAvoid::UpdateTelemetry(const SContext &Ctx, const SInputPlan &Plan)
 // Decision engine: stage 2 - Basic agent (forward simulator + direction braking)
 // ---------------------------------------------------------------------------------------------
 
-int CAvoid::SimulateInput(const SContext &Ctx, const CNetObj_PlayerInput &Input, int MaxTicks,
-	vec2 *pOutPos, vec2 *pOutVel)
+Avoid::SEnvironment CAvoid::BuildEnvironment(const SContext &Ctx, bool WithPlayers) const
 {
-	// The collision context of the live map. `CCollision` is shared by the game world, the TAS
-	// practice sandbox and the sensor layer, so the clone runs on exactly the geometry the real
-	// tee does. The simulation can never affect the real tee: `CCharacterCore` has no back
-	// pointer into the entity, and `DoDeferredTick = false` keeps the player-collision pass out.
-	CCollision *pCollision = Collision();
-	if(!pCollision)
-		return 0;
+	Avoid::SEnvironment Env;
+	Env.m_pCollision = Collision();
+	Env.m_LocalId = (Ctx.m_ClientId >= 0 && Ctx.m_ClientId < MAX_CLIENTS) ? Ctx.m_ClientId : -1;
 
-	const int Depth = std::clamp(MaxTicks, 0, MAX_SIM_TICKS);
-	if(Depth <= 0)
-		return 0;
-
-	// The clone needs the world and the teams core as well, because `CCharacterCore::Tick()` asks
-	// the collision layer for the switch state of its own tile (`IsSwitchActiveCb` dereferences
-	// both). Inside the TAS practice sandbox the active world is the sandbox, not the live one.
-	CWorldCore *pWorld = nullptr;
-	CTeamsCore *pTeams = nullptr;
+	// Inside the TAS practice sandbox the active world is the sandbox, not the live one.
 	if(GameClient()->m_FastPractice.Active())
 	{
-		pWorld = &GameClient()->m_FastPractice.PracticeWorld().m_Core;
-		pTeams = GameClient()->m_FastPractice.PracticeWorld().Teams();
+		Env.m_pWorld = &GameClient()->m_FastPractice.PracticeWorld().m_Core;
+		Env.m_pTeams = GameClient()->m_FastPractice.PracticeWorld().Teams();
 	}
 	else
 	{
-		pWorld = &GameClient()->m_GameWorld.m_Core;
-		pTeams = GameClient()->m_GameWorld.Teams();
+		Env.m_pWorld = &GameClient()->m_GameWorld.m_Core;
+		Env.m_pTeams = &GameClient()->m_Teams;
 	}
 
-	// Start from a core in the documented reset state, then carry over everything the tick loop
-	// actually reads. Going through `Reset()` also parks `m_pWorld` / `m_pTeams` at null, so this
-	// function stays correct even if the collision pointer above ever goes missing.
-	CCharacterCore Sim;
-	Sim.Reset();
-	Sim.SetCoreWorld(pWorld, pCollision, pTeams);
-	Sim.m_Pos = Ctx.m_Core.m_Pos;
-	Sim.m_Vel = Ctx.m_Core.m_Vel;
-	Sim.m_HookPos = Ctx.m_Core.m_HookPos;
-	Sim.m_HookDir = Ctx.m_Core.m_HookDir;
-	Sim.m_HookTeleBase = Ctx.m_Core.m_HookTeleBase;
-	Sim.m_HookTick = Ctx.m_Core.m_HookTick;
-	Sim.m_HookState = Ctx.m_Core.m_HookState;
-	Sim.m_NewHook = Ctx.m_Core.m_NewHook;
-	Sim.m_Jumped = Ctx.m_Core.m_Jumped;
-	Sim.m_JumpedTotal = Ctx.m_Core.m_JumpedTotal;
-	Sim.m_Jumps = Ctx.m_Core.m_Jumps;
-	Sim.m_Direction = Ctx.m_Core.m_Direction;
-	Sim.m_Angle = Ctx.m_Core.m_Angle;
-	Sim.m_TriggeredEvents = Ctx.m_Core.m_TriggeredEvents;
-	Sim.m_FreezeStart = Ctx.m_Core.m_FreezeStart;
-	Sim.m_FreezeEnd = Ctx.m_Core.m_FreezeEnd;
-	Sim.m_IsInFreeze = Ctx.m_Core.m_IsInFreeze;
-	Sim.m_DeepFrozen = Ctx.m_Core.m_DeepFrozen;
-	Sim.m_LiveFrozen = Ctx.m_Core.m_LiveFrozen;
-	Sim.m_CollisionDisabled = Ctx.m_Core.m_CollisionDisabled;
-	Sim.m_Solo = Ctx.m_Core.m_Solo;
-	Sim.m_Super = Ctx.m_Core.m_Super;
-	Sim.m_Invincible = Ctx.m_Core.m_Invincible;
-	// Map tuning, never hard-coded constants: on a `tune` map the physics is driven entirely by
-	// this struct, and guessing gravity / control accel here would drift the whole prediction.
-	Sim.m_Tuning = Ctx.m_Core.m_Tuning;
-	// `CCharacterCore::Tick()` asks `IsSwitchActiveCb` for the switch state of the tile the tee
-	// stands on, and that callback dereferences both the world and the teams core (the clone has
-	// both). A neutral but non-negative id keeps the clone out of every team decision, and the
-	// clone is not registered in `m_pWorld->m_apCharacters`, so it can never drag on a real player.
-	Sim.m_Id = 0;
+	if(!WithPlayers || !Env.m_pTeams)
+		return Env;
 
-	Sim.m_Input = Input;
-
-	int Safe = 0;
-	while(Safe < Depth)
+	// Player prediction (`bc_avoid_player_prediction`): freeze the nearest other tees into a small
+	// list of snapshots that the clone world carries as moving obstacles. Only the ones close
+	// enough to be reachable inside the lookahead are worth the simulation cost; the list is
+	// capped by MAX_SHADOW_PLAYERS, so a crowded server degrades instead of stalling.
+	const float MaxDistance = (Ctx.m_Settings.m_SensingRadius + 2.0f) * TILE_SIZE;
+	bool aTaken[MAX_CLIENTS] = {};
+	for(int Slot = 0; Slot < Avoid::MAX_SHADOW_PLAYERS; Slot++)
 	{
-		Sim.Tick(true, false);
-		Sim.Move();
-
-		// Exactly the stage 1 probe rules, so "the sensor says dangerous" and "the physics says
-		// dangerous" can never drift apart.
-		if(IsRelevantHazard(ClassifyPoint(Sim.m_Pos)))
+		int BestId = -1;
+		float BestDistance = MaxDistance;
+		for(int i = 0; i < MAX_CLIENTS; i++)
+		{
+			if(aTaken[i] || i == Ctx.m_ClientId || !GameClient()->m_aClients[i].m_Active || GameClient()->m_aClients[i].m_Spec)
+				continue;
+			const float Distance = distance(GameClient()->m_aClients[i].m_Predicted.m_Pos, Ctx.m_Core.m_Pos);
+			if(Distance <= BestDistance)
+			{
+				BestDistance = Distance;
+				BestId = i;
+			}
+		}
+		if(BestId < 0)
 			break;
-		Safe++;
+		aTaken[BestId] = true;
+		Env.m_aPlayers[Env.m_NumPlayers].m_Id = BestId;
+		Env.m_aPlayers[Env.m_NumPlayers].m_Core = GameClient()->m_aClients[BestId].m_Predicted;
+		Env.m_NumPlayers++;
 	}
+	Env.m_PredictPlayers = true;
+	return Env;
+}
 
-	if(pOutPos)
-		*pOutPos = Sim.m_Pos;
-	if(pOutVel)
-		*pOutVel = Sim.m_Vel;
-	return Safe;
+int CAvoid::FlyHammerState(const SContext &Ctx) const
+{
+	// Deep fly / hammer fly (TAS document 3.11.7) are two player flights in which the movement key
+	// is not a walking key. The client side markers are the dummy connection and `cl_dummy_hammer`
+	// (the HDF toggle, which the DF bind also sets while firing) plus the tee being airborne - on
+	// the ground the pair is not flying and the agent may still brake normally.
+	if(!Client()->DummyConnected() || !g_Config.m_ClDummyHammer)
+		return Avoid::MOVE_NORMAL;
+	if(Collision() && Collision()->IsOnGround(Ctx.m_Core.m_Pos, CCharacterCore::PhysicalSize()))
+		return Avoid::MOVE_NORMAL;
+	return Avoid::MOVE_FLY_HAMMER;
+}
+
+int CAvoid::SimulateInput(const SContext &Ctx, const CNetObj_PlayerInput &Input, int MaxTicks,
+	vec2 *pOutPos, vec2 *pOutVel)
+{
+	// The recipe itself lives in avoid_engine.cpp (Avoid::SimulateFixed) so that the Basic agent,
+	// the Legit agent and the unit tests run the exact same physics. Basic never predicts other
+	// players, so it keeps the stage 2 configuration: the live world, no deferred tick.
+	const Avoid::SEnvironment Env = BuildEnvironment(Ctx, false);
+	return Avoid::SimulateFixed(Ctx, Input, MaxTicks, &Env, pOutPos, pOutVel);
+}
+
+CAvoid::SInputPlan CAvoid::PlanLegit(const SContext &Ctx)
+{
+	const Avoid::SEnvironment Env = BuildEnvironment(Ctx, Ctx.m_Settings.m_PlayerPrediction);
+	return m_Planner.Plan(Ctx, Env);
 }
 
 void CAvoid::LogTrace(const char *pTag, const SContext &Ctx, int SafeTicks, int Limit, const SInputPlan &Plan) const
@@ -671,13 +552,15 @@ void CAvoid::LogTrace(const char *pTag, const SContext &Ctx, int SafeTicks, int 
 	// at the tee, how long the player's own input survives and what the agent answered. Walking
 	// the tee along a wall of death tiles and watching the `safe` column drop is the calibration
 	// procedure for the simulator (see the delivery document, 6.6 step 1).
-	char aBuf[256];
-	str_format(aBuf, sizeof(aBuf), "[avoid] tick %d  pos (%.1f, %.1f) tiles  vel (%.1f, %.1f)  threat %s  hazard %s  player safe %d/%d  override %s  safe %d  reason %s",
+	char aBuf[320];
+	str_format(aBuf, sizeof(aBuf), "[avoid] tick %d  pos (%.1f, %.1f) tiles  vel (%.1f, %.1f)  threat %s  hazard %s  agent %s  player safe %d/%d  override %s  safe %d  plans %d  cost %.3f ms  plan d/j/h %d/%d/%d  reason %s",
 		Ctx.m_Tick, Ctx.m_Core.m_Pos.x / TILE_SIZE, Ctx.m_Core.m_Pos.y / TILE_SIZE,
 		Ctx.m_Core.m_Vel.x, Ctx.m_Core.m_Vel.y,
 		Ctx.m_Threat.m_HasNearest ? HazardName(Ctx.m_Threat.m_Flags) : "CLEAR",
 		Ctx.m_Threat.m_OnHazard ? "yes" : "no",
-		SafeTicks, Limit, Plan.m_Override ? "yes" : "no", Plan.m_SafeTicks, pTag);
+		AgentName(Ctx.m_Settings.m_Agent),
+		SafeTicks, Limit, Plan.m_Override ? "yes" : "no", Plan.m_SafeTicks, Plan.m_Candidates,
+		Plan.m_CostMs, Plan.m_Input.m_Direction, Plan.m_Input.m_Jump ? 1 : 0, Plan.m_Input.m_Hook ? 1 : 0, pTag);
 	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "avoid", aBuf);
 }
 
@@ -755,6 +638,36 @@ CAvoid::SInputPlan CAvoid::EvaluateBestPlan(const SContext &Ctx)
 		return Finish(BcLocalize("no hazard within sensing range"));
 
 	// --------------------------------------------------------------------------------------------
+	// 0b. Movement state gate (stage 3, TAS red line 3.11.7).
+	//
+	//     Rewriting `m_Direction` is only ever justified as "do not walk into that hazard". While
+	//     the tee is on a jetpack, hanging on another tee or being launched by the dummy's hammer,
+	//     the movement key is not a walking key, so the agent is hands off by default and says why.
+	//     The dummy connection itself is never touched at all (the `!Dummy` branch of OnSnapInput).
+	// --------------------------------------------------------------------------------------------
+	const int MoveState = Avoid::ClassifyMovement(Ctx.m_Core, FlyHammerState(Ctx) != Avoid::MOVE_NORMAL);
+	if(MoveState != Avoid::MOVE_NORMAL)
+	{
+		if(MoveState & Avoid::MOVE_JETPACK)
+			return Finish(BcLocalize("jetpack, hands off"));
+		if(MoveState & Avoid::MOVE_HOOKED_PLAYER)
+			return Finish(BcLocalize("hooked to a player, hands off"));
+		return Finish(BcLocalize("fly hammer, hands off"));
+	}
+
+	// --------------------------------------------------------------------------------------------
+	// 0c. Agent dispatch.
+	//
+	//     Legit runs its own search: its fast path, kick-in threshold and lookahead all have to use
+	//     the prediction aware simulation, so they live in the planner. Everything below this point
+	//     is the untouched stage 2 Basic agent.
+	// --------------------------------------------------------------------------------------------
+	if(Set.m_Agent == AGENT_LEGIT)
+		return PlanLegit(Ctx);
+	if(Set.m_Agent != AGENT_BASIC)
+		return Finish(BcLocalize("agent not implemented yet"));
+
+	// --------------------------------------------------------------------------------------------
 	// 1. Fast path: does the input the player is about to send stay safe on its own?
 	//    This decides the whole feel of the module - any tick that lands here is a tick the player
 	//    never notices the agent exists.
@@ -768,8 +681,10 @@ CAvoid::SInputPlan CAvoid::EvaluateBestPlan(const SContext &Ctx)
 
 	// 2. Kick-in: the player's input still survives long enough, so do not touch it yet. This is
 	//    what keeps the agent from hovering over every tee that walks past a hazard.
+	// `kick_in_ticks = 0` means "do not wait at all"; without the guard the comparison would always
+	// be true and the lowest slider setting would mean "never intervene".
 	const int KickIn = std::clamp(Set.m_KickInTicks, 0, MAX_SIM_TICKS);
-	if(PlayerSafe >= KickIn)
+	if(KickIn > 0 && PlayerSafe >= KickIn)
 		return Finish(BcLocalize("still time before the hazard"));
 
 	// 3. Basic candidate set: the three direction keys. The player's own direction is always in
@@ -1040,19 +955,29 @@ void CAvoid::RenderWorldOverlay(const CCharacterCore &Core, const SThreat &Threa
 	// ghost/double outline as soon as the tee moves fast.
 	const vec2 Anchor = OverlayAnchor(Core);
 	const vec2 Pos = Anchor;
-	const int Radius = std::clamp(m_Settings.m_SensingRadius, 2, 16);
+	// Exactly the reach the sensor uses - half tile steps and the same vertical squash - so the
+	// ring and the highlights show what the agent can actually see.
+	const float RadiusX = std::clamp(m_Settings.m_SensingRadius, 0.5f, 16.0f);
+	const float RadiusY = std::max(0.5f, RadiusX * Avoid::SensingVerticalFactor(Core, m_Settings));
+	const float ReachX = RadiusX * TILE_SIZE;
+	const float ReachY = RadiusY * TILE_SIZE;
+	const int ScanX = (int)std::ceil(RadiusX);
+	const int ScanY = (int)std::ceil(RadiusY);
 	const int CenterX = (int)std::floor(Core.m_Pos.x / TILE_SIZE);
 	const int CenterY = (int)std::floor(Core.m_Pos.y / TILE_SIZE);
 
 	// Hazard tile highlights.
 	Graphics()->QuadsBegin();
-	for(int Ty = CenterY - Radius; Ty <= CenterY + Radius; ++Ty)
+	for(int Ty = CenterY - ScanY; Ty <= CenterY + ScanY; ++Ty)
 	{
-		for(int Tx = CenterX - Radius; Tx <= CenterX + Radius; ++Tx)
+		for(int Tx = CenterX - ScanX; Tx <= CenterX + ScanX; ++Tx)
 		{
 			const vec2 TileCenter((Tx + 0.5f) * TILE_SIZE, (Ty + 0.5f) * TILE_SIZE);
 			const int Flags = ClassifyPoint(TileCenter);
 			if(Flags == HAZ_NONE || !IsRelevantHazard(Flags))
+				continue;
+			const vec2 Delta = Avoid::TileBoxDelta(Pos, Tx, Ty);
+			if((Delta.x / ReachX) * (Delta.x / ReachX) + (Delta.y / ReachY) * (Delta.y / ReachY) > 1.0f)
 				continue;
 
 			ColorRGBA Col = HazardColor(Flags);
@@ -1068,14 +993,14 @@ void CAvoid::RenderWorldOverlay(const CCharacterCore &Core, const SThreat &Threa
 	const int NumSegments = 64;
 	static IGraphics::CLineItem s_aRing[NumSegments];
 	static IGraphics::CLineItem s_aVector[2];
-	const float RingRadius = Radius * TILE_SIZE;
+	const float RingRadius = ReachX;
 	Graphics()->SetColor(0.45f, 0.65f, 0.95f, 0.35f);
 	for(int i = 0; i < NumSegments; ++i)
 	{
 		const float A0 = 2.0f * pi * (float)i / (float)NumSegments;
 		const float A1 = 2.0f * pi * (float)(i + 1) / (float)NumSegments;
-		s_aRing[i] = IGraphics::CLineItem(Pos + vec2(std::cos(A0), std::sin(A0)) * RingRadius,
-			Pos + vec2(std::cos(A1), std::sin(A1)) * RingRadius);
+		s_aRing[i] = IGraphics::CLineItem(Pos + vec2(std::cos(A0) * RingRadius, std::sin(A0) * ReachY),
+			Pos + vec2(std::cos(A1) * RingRadius, std::sin(A1) * ReachY));
 	}
 	Graphics()->LinesBegin();
 	Graphics()->LinesDraw(s_aRing, NumSegments);

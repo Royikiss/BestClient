@@ -155,6 +155,72 @@ const SAvoidPanelDef g_aBlatantPanels[] = {
 	{PANEL_AIMBOT, "Aimbot"},
 	{PANEL_SAFETY, "Safety"},
 };
+// "Restore defaults" only stores the *script names*, so every value comes from the cvar
+// definition in `config_variables_bestclient.h`. There is deliberately no second copy of the
+// defaults that could drift away from the real ones.
+const char *const g_aBasicDefaultParams[] = {
+	// Shown in the Tiles panel.
+	"bc_avoid_tile_death",
+	"bc_avoid_tile_freeze",
+	"bc_avoid_tile_unfreeze",
+	"bc_avoid_tile_tele",
+	"bc_avoid_unfreeze_ticks",
+	"bc_avoid_sensing_radius",
+	// Read by Basic although the sliders live in the Legit / Blatant panels.
+	"bc_avoid_direction_assist",
+	"bc_avoid_check_ticks",
+	"bc_avoid_kick_in_ticks",
+	"bc_avoid_direction_weight",
+	"bc_avoid_life_weight",
+	"bc_avoid_afk_protect",
+	"bc_avoid_afk_time",
+};
+
+const char *const g_aLegitDefaultParams[] = {
+	// Assist panel.
+	"bc_avoid_direction_assist",
+	"bc_avoid_hook_assist",
+	"bc_avoid_player_prediction",
+	"bc_avoid_afk_protect",
+	"bc_avoid_afk_time",
+	// Tuning panel.
+	"bc_avoid_check_ticks",
+	"bc_avoid_quality",
+	"bc_avoid_randomness",
+	// Priorities panel.
+	"bc_avoid_direction_weight",
+	"bc_avoid_hook_weight",
+	"bc_avoid_life_weight",
+	// Read by Legit although the sliders live in the Blatant panels.
+	"bc_avoid_kick_in_ticks",
+	"bc_avoid_nsif",
+	// Tiles panel.
+	"bc_avoid_tile_death",
+	"bc_avoid_tile_freeze",
+	"bc_avoid_tile_unfreeze",
+	"bc_avoid_tile_tele",
+	"bc_avoid_unfreeze_ticks",
+	"bc_avoid_sensing_radius",
+};
+
+// Blatant / Fentbot / Pilot get their list when their algorithms land (stage 4+); until then the
+// button is simply not drawn for them, so nothing pretends to reset parameters that do nothing.
+const char *const *AvoidDefaultParams(int Agent, int *pCount)
+{
+	switch(Agent)
+	{
+	case CAvoid::AGENT_LEGIT:
+		*pCount = (int)std::size(g_aLegitDefaultParams);
+		return g_aLegitDefaultParams;
+	case CAvoid::AGENT_BASIC:
+		*pCount = (int)std::size(g_aBasicDefaultParams);
+		return g_aBasicDefaultParams;
+	default:
+		*pCount = 0;
+		return nullptr;
+	}
+}
+
 const SAvoidPanelDef g_aFentPanels[] = {
 	{PANEL_FENT_AVOID, "Avoid"},
 	{PANEL_FENT_CALC, "Calculation"},
@@ -443,6 +509,17 @@ void CMenus::RenderSettingsAvoid(CUIRect MainView)
 		RightColumn.HSplitTop(6.0f, nullptr, &RightColumn);
 		Panel = RightColumn;
 
+		// A small square button on the right end of the tab bar: put every parameter of the selected
+		// agent back to its default. It only appears for the agents that have a parameter list.
+		int NumDefaults = 0;
+		const char *const *apDefaults = AvoidDefaultParams(Agent, &NumDefaults);
+		CUIRect DefaultsRow;
+		if(NumDefaults > 0)
+		{
+			NavBar.VSplitRight(92.0f, &NavBar, &DefaultsRow);
+			NavBar.VSplitRight(6.0f, &NavBar, nullptr);
+		}
+
 		static CButtonContainer s_aPanelButtons[8];
 		for(int i = 0; i < PanelCount; ++i)
 		{
@@ -451,6 +528,23 @@ void CMenus::RenderSettingsAvoid(CUIRect MainView)
 			const int Corners = i == 0 ? IGraphics::CORNER_L : (i == PanelCount - 1 ? IGraphics::CORNER_R : IGraphics::CORNER_NONE);
 			if(DoButton_MenuTab(&s_aPanelButtons[i], BcLocalize(AvoidPanelDef(Agent, i).m_pName), Selected == i, &Button, Corners))
 				Selected = i;
+		}
+
+		if(NumDefaults > 0)
+		{
+			static CButtonContainer s_DefaultsButton;
+			static double s_RestoredAt = 0.0;
+			const bool JustRestored = s_RestoredAt > 0.0 && Client()->LocalTime() - s_RestoredAt < 2.0;
+			if(DoButton_CheckBox_Common(&s_DefaultsButton, JustRestored ? BcLocalize("Restored") : BcLocalize("Defaults"), "", &DefaultsRow, BUTTONFLAG_LEFT))
+			{
+				if(IConfigManager *pConfigManager = ConfigManager())
+				{
+					for(int i = 0; i < NumDefaults; i++)
+						pConfigManager->Reset(apDefaults[i]);
+				}
+				s_RestoredAt = Client()->LocalTime();
+				GameClient()->Echo(BcLocalize("Avoid: parameters restored to their defaults"));
+			}
 		}
 
 		AvoidPanel(Panel);
@@ -674,14 +768,16 @@ void CMenus::RenderSettingsAvoid(CUIRect MainView)
 			AvoidSectionTitle(Ui(), &Content, BcLocalize("Sensing"));
 			CUIRect RowRadius;
 			Content.HSplitTop(24.0f, &RowRadius, &Content);
-			Ui()->DoScrollbarOption(&g_Config.m_BcAvoidSensingRadius, &g_Config.m_BcAvoidSensingRadius, &RowRadius, BcLocalize("Sensing radius"), 2, 16, &CUi::ms_LinearScrollbarScale, 0u, BcLocalize("tiles"));
+			// The slider is in half tiles (1 = 0.5 tile, 32 = 16 tiles) so that the low end can be
+			// "react almost only when I am already touching it".
+			Ui()->DoScrollbarOption(&g_Config.m_BcAvoidSensingRadius, &g_Config.m_BcAvoidSensingRadius, &RowRadius, BcLocalize("Radius (half tiles)"), 1, 32, &CUi::ms_LinearScrollbarScale, 0u);
 
 			Content.HSplitTop(8.0f, nullptr, &Content);
 			AvoidHint(Ui(), TextRender(), Content,
 				BcLocalize("Black water and freeze are what the agent protects you from. Unfreeze and teleport tiles are optional: turning them on keeps you away from helpers you may actually want."), 10.0f);
 			Content.HSplitTop(28.0f, nullptr, &Content);
 			AvoidHint(Ui(), TextRender(), Content,
-				BcLocalize("The sensing radius only affects what the agent can see ahead of time and the threat overlay. It costs almost nothing."), 10.0f);
+				BcLocalize("The sensing radius is how far ahead the agent may notice a hazard, in half tiles (12 = 6 tiles). Lower it to react later, raise it to react earlier; the scan itself costs almost nothing."), 10.0f);
 			break;
 		}
 

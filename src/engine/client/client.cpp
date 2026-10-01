@@ -5347,7 +5347,14 @@ int main(int argc, const char **argv)
 			g_Config.m_ClAntiPingWeapons = 1;
 		}
 	}
-	g_Config.m_ClConfigVersion = 1;
+	if(g_Config.m_ClConfigVersion < 2)
+	{
+		// bestclient: `bc_avoid_sensing_radius` used to be whole tiles and is half tiles now, so
+		// that the low end of the slider can mean half a tile. Old values are doubled once; the
+		// command line and the in-game console afterwards already speak the new unit.
+		g_Config.m_BcAvoidSensingRadius = std::clamp(g_Config.m_BcAvoidSensingRadius * 2, 1, 32);
+	}
+	g_Config.m_ClConfigVersion = 2;
 
 	// parse the command line arguments
 	pConsole->SetUnknownCommandCallback(UnknownArgumentCallback, pClient);

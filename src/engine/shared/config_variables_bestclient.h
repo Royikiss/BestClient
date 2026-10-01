@@ -636,7 +636,7 @@ MACRO_CONFIG_INT(BcAvoidAimbot, bc_avoid_aimbot, 0, 0, 1, CFGFLAG_CLIENT | CFGFL
 MACRO_CONFIG_INT(BcAvoidAimbotMode, bc_avoid_aimbot_mode, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid internal aim mode (0=auto aim, 1=aim assist)")
 MACRO_CONFIG_INT(BcAvoidAimbotSegments, bc_avoid_aimbot_segments, 24, 4, 128, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid internal aim scan segments inside the field of view")
 MACRO_CONFIG_INT(BcAvoidAimbotFov, bc_avoid_aimbot_fov, 90, 10, 180, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid internal aim field of view in degrees")
-MACRO_CONFIG_INT(BcAvoidSensingRadius, bc_avoid_sensing_radius, 6, 2, 16, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid hazard sensing radius in tiles")
+MACRO_CONFIG_INT(BcAvoidSensingRadius, bc_avoid_sensing_radius, 2, 1, 32, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid hazard sensing radius in half tiles (1 = 0.5 tile, 32 = 16 tiles; default 2 = 1 tile)")
 MACRO_CONFIG_INT(BcAvoidShowHud, bc_avoid_show_hud, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Master switch for the Avoid status HUD module (also needs the module enabled in the HUD editor)")
 MACRO_CONFIG_INT(BcAvoidShowVisuals, bc_avoid_show_visuals, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Highlight sensed hazard tiles and the threat vector in the world")
 MACRO_CONFIG_INT(BcAvoidLog, bc_avoid_log, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Print Avoid decisions to the console for debugging")

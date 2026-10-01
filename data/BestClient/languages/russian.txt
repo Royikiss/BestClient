@@ -3242,3 +3242,103 @@ NSIF: steer right before hazard
 [BestClient]
 no hazard within sensing range
 == в радиусе обзора нет опасности
+
+[BestClient]
+release hook before hazard
+== отпустить крюк перед опасностью
+
+[BestClient]
+release hook, brake before hazard
+== отпустить крюк и затормозить перед опасностью
+
+[BestClient]
+release hook, steer left before hazard
+== отпустить крюк и влево перед опасностью
+
+[BestClient]
+release hook, steer right before hazard
+== отпустить крюк и вправо перед опасностью
+
+[BestClient]
+release hook and jump before hazard
+== отпустить крюк и прыгнуть перед опасностью
+
+[BestClient]
+press hook before hazard
+== зацепиться крюком перед опасностью
+
+[BestClient]
+press hook, brake before hazard
+== зацепиться крюком и затормозить
+
+[BestClient]
+press hook, steer left before hazard
+== зацепиться крюком и влево
+
+[BestClient]
+press hook, steer right before hazard
+== зацепиться крюком и вправо
+
+[BestClient]
+jump before hazard
+== прыжок перед опасностью
+
+[BestClient]
+jump, brake before hazard
+== прыжок и торможение перед опасностью
+
+[BestClient]
+jump, steer left before hazard
+== прыжок и влево перед опасностью
+
+[BestClient]
+jump, steer right before hazard
+== прыжок и вправо перед опасностью
+
+[BestClient]
+no safer plan
+== нет более безопасного плана
+
+[BestClient]
+jetpack, hands off
+== джетпак: агент не вмешивается
+
+[BestClient]
+hooked to a player, hands off
+== крюк на игроке: агент не вмешивается
+
+[BestClient]
+fly hammer, hands off
+== хаммерфлай: агент не вмешивается
+
+[BestClient]
+agent not implemented yet
+== этот агент ещё не реализован
+
+[BestClient]
+warning: kick in ticks is not below check ticks, the agent will react late
+== внимание: kick in ticks не меньше check ticks, агент будет реагировать поздно
+
+[BestClient]
+Radius (half tiles)
+== Радиус (полутайлы)
+
+[BestClient]
+The sensing radius is how far ahead the agent may notice a hazard, in half tiles (12 = 6 tiles). Lower it to react later, raise it to react earlier; the scan itself costs almost nothing.
+== Радиус обзора — это то, насколько заранее агент замечает опасность, в полутайлах (12 = 6 тайлов). Меньше — позже реакция, больше — раньше; сам скан почти ничего не стоит.
+
+[BestClient]
+no safer plan (jump is a last resort)
+== нет более безопасного плана (прыжок — крайняя мера)
+
+[BestClient]
+Defaults
+== Сброс
+
+[BestClient]
+Restored
+== Сброшено
+
+[BestClient]
+Avoid: parameters restored to their defaults
+== Avoid: параметры сброшены к значениям по умолчанию

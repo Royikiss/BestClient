@@ -3242,3 +3242,103 @@ NSIF: steer right before hazard
 [BestClient]
 no hazard within sensing range
 == 感知范围内无危险
+
+[BestClient]
+release hook before hazard
+== 在危险前松开钩子
+
+[BestClient]
+release hook, brake before hazard
+== 松开钩子并在危险前刹停
+
+[BestClient]
+release hook, steer left before hazard
+== 松开钩子并向左减速
+
+[BestClient]
+release hook, steer right before hazard
+== 松开钩子并向右减速
+
+[BestClient]
+release hook and jump before hazard
+== 松开钩子并跳起
+
+[BestClient]
+press hook before hazard
+== 在危险前按下钩子
+
+[BestClient]
+press hook, brake before hazard
+== 按下钩子并在危险前刹停
+
+[BestClient]
+press hook, steer left before hazard
+== 按下钩子并向左减速
+
+[BestClient]
+press hook, steer right before hazard
+== 按下钩子并向右减速
+
+[BestClient]
+jump before hazard
+== 在危险前跳起
+
+[BestClient]
+jump, brake before hazard
+== 跳起并在危险前刹停
+
+[BestClient]
+jump, steer left before hazard
+== 跳起并向左减速
+
+[BestClient]
+jump, steer right before hazard
+== 跳起并向右减速
+
+[BestClient]
+no safer plan
+== 没有更安全的方案
+
+[BestClient]
+jetpack, hands off
+== 喷气背包中，代理不介入
+
+[BestClient]
+hooked to a player, hands off
+== 钩住玩家中，代理不介入
+
+[BestClient]
+fly hammer, hands off
+== 飞锤中，代理不介入
+
+[BestClient]
+agent not implemented yet
+== 该代理尚未实现
+
+[BestClient]
+warning: kick in ticks is not below check ticks, the agent will react late
+== 警告：介入阈值不低于前瞻帧数，代理会反应过晚
+
+[BestClient]
+Radius (half tiles)
+== 半径（半格）
+
+[BestClient]
+The sensing radius is how far ahead the agent may notice a hazard, in half tiles (12 = 6 tiles). Lower it to react later, raise it to react earlier; the scan itself costs almost nothing.
+== 感知半径是代理能提前发现危险的距离，单位是半格（12 = 6 格）。调小 → 更晚介入，调大 → 更早介入；这项扫描本身几乎不耗性能。
+
+[BestClient]
+no safer plan (jump is a last resort)
+== 没有更安全的方案（跳跃留作最后手段）
+
+[BestClient]
+Defaults
+== 恢复默认
+
+[BestClient]
+Restored
+== 已恢复
+
+[BestClient]
+Avoid: parameters restored to their defaults
+== 避障：参数已恢复为默认值

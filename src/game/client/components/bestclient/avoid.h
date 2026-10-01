@@ -2,6 +2,8 @@
 #ifndef GAME_CLIENT_COMPONENTS_BESTCLIENT_AVOID_H
 #define GAME_CLIENT_COMPONENTS_BESTCLIENT_AVOID_H
 
+#include "avoid_engine.h"
+
 #include <base/vmath.h>
 
 #include <engine/console.h>
@@ -25,11 +27,16 @@ class CCharacter;
  *   - the in-game status HUD and the world-space threat overlay,
  *   - the "Avoid" page of the TAS& menu.
  *
- * STAGE 2 (current revision) fills the decision engine with the Basic agent: a forward simulator
- * built on a cloned CCharacterCore, plus a three candidate direction search (left / keep / right).
- * It only ever rewrites `m_Input.m_Direction`; hook, jump, fire and aim stay exactly as the player
- * sent them. Legit / Blatant (hook release, MCTS, NSIF candidate search, aimbot) are still to come
- * and reuse the same SimulateInput().
+ * STAGE 2 filled the decision engine with the Basic agent: a forward simulator built on a cloned
+ * CCharacterCore, plus a three candidate direction search (left / keep / right). It only ever
+ * rewrites `m_Input.m_Direction`; hook, jump, fire and aim stay exactly as the player sent them.
+ *
+ * STAGE 3 (current revision) adds the Legit agent: the candidate space grows to
+ * direction x jump x hook, the search becomes a UCT search whose iteration count / exploration
+ * constant / three priority weights are the `bc_avoid_*` sliders, hook release and jump become
+ * real options and the clone can predict other players. All of that lives in Avoid::CPlanner
+ * (avoid_engine.h/.cpp) so it stays unit testable; this component keeps the sensing layer, the
+ * input pipeline, the state machine, the HUD and the Basic agent exactly as stage 2 left them.
  * ------------------------------------------------------------------------------------------- */
 class CAvoid : public CComponent
 {
@@ -53,91 +60,28 @@ public:
 		STATE_AFK, // disarmed automatically by AFK protection
 	};
 
-	// Hazard classification bits. A tile can carry several of them.
+	// Hazard classification bits, defined once in avoid_engine.h so that the sensing layer and the
+	// decision engine cannot drift apart.
 	enum
 	{
-		HAZ_NONE = 0,
-		HAZ_DEATH = 1 << 0, // TILE_DEATH and death switches
-		HAZ_FREEZE = 1 << 1, // TILE_FREEZE
-		HAZ_DEEP = 1 << 2, // TILE_DFREEZE
-		HAZ_LIVE = 1 << 3, // TILE_LFREEZE
-		HAZ_UNFREEZE = 1 << 4, // TILE_UNFREEZE (optional hazard, off by default)
-		HAZ_TELE = 1 << 5, // any teleport tile (optional hazard, off by default)
-		HAZ_SELF = 1 << 6, // the tee itself is frozen / deep frozen right now
-		HAZ_ANY = HAZ_DEATH | HAZ_FREEZE | HAZ_DEEP | HAZ_LIVE | HAZ_UNFREEZE | HAZ_TELE,
+		HAZ_NONE = Avoid::HAZ_NONE,
+		HAZ_DEATH = Avoid::HAZ_DEATH, // TILE_DEATH and death switches
+		HAZ_FREEZE = Avoid::HAZ_FREEZE, // TILE_FREEZE
+		HAZ_DEEP = Avoid::HAZ_DEEP, // TILE_DFREEZE
+		HAZ_LIVE = Avoid::HAZ_LIVE, // TILE_LFREEZE
+		HAZ_UNFREEZE = Avoid::HAZ_UNFREEZE, // TILE_UNFREEZE (optional hazard, off by default)
+		HAZ_TELE = Avoid::HAZ_TELE, // any teleport tile (optional hazard, off by default)
+		HAZ_SELF = Avoid::HAZ_SELF, // the tee itself is frozen / deep frozen right now
+		HAZ_ANY = Avoid::HAZ_ANY,
 	};
 
-	// Snapshot of the cvars, refreshed once per decision so that the engine always
-	// reads a stable configuration.
-	struct SSettings
-	{
-		int m_Agent = AGENT_BASIC;
-		bool m_DirectionAssist = true;
-		bool m_HookAssist = true;
-		int m_CheckTicks = 26;
-		int m_KickInTicks = 20;
-		int m_Quality = 24;
-		int m_Randomness = 30;
-		int m_DirectionWeight = 100;
-		int m_HookWeight = 100;
-		int m_LifeWeight = 150;
-		bool m_TileDeath = true;
-		bool m_TileFreeze = true;
-		bool m_TileUnfreeze = false;
-		int m_UnfreezeTicks = 26;
-		bool m_TileTele = false;
-		bool m_PlayerPrediction = true;
-		bool m_Nsif = true;
-		bool m_AfkProtect = true;
-		int m_AfkTime = 60;
-		bool m_TrackPoint = false;
-		bool m_SafeAimTracking = true;
-		bool m_AutoDrag = false;
-		bool m_Aimbot = false;
-		int m_AimbotMode = 0; // 0 = auto aim, 1 = aim assist
-		int m_AimbotSegments = 24;
-		int m_AimbotFov = 90;
-		int m_SensingRadius = 6;
-	};
-
-	// Result of the hazard scan around the controlled tee.
-	struct SThreat
-	{
-		int m_Flags = HAZ_NONE; // union of all hazard bits seen on the tee itself
-		vec2 m_NearestPos = vec2(0.0f, 0.0f); // world position of the closest hazard tile centre
-		float m_NearestDistPx = 0.0f; // distance from the tee to the closest hazard tile box
-		bool m_HasNearest = false;
-		int m_SensedTiles = 0; // tiles examined by the scan
-		int m_HazardTiles = 0; // tiles inside the sensing radius that are hazardous
-		bool m_OnHazard = false; // the tee is standing inside a hazard right now
-	};
-
-	// Everything the decision engine is allowed to look at.
-	struct SContext
-	{
-		int m_Tick = 0; // client tick this decision belongs to
-		int m_ClientId = -1;
-		bool m_Dummy = false; // the controlled tee is the dummy connection
-		CCharacterCore m_Core{}; // live physics state of the controlled tee
-		CNetObj_PlayerInput m_Input{}; // the input the player is about to send
-		bool m_PlayerInputSafe = false; // filled by the engine (stage 2)
-		SThreat m_Threat{};
-		SSettings m_Settings{};
-	};
-
-	// What the decision engine answers with.
-	struct SInputPlan
-	{
-		bool m_Override = false; // true => replace the outgoing input with m_Input
-		bool m_UsedFallback = false; // true => NSIF: nothing was fully safe
-		CNetObj_PlayerInput m_Input{};
-		int m_SafeTicks = 0; // how long the chosen plan survives
-		int m_ScannedTicks = 0; // simulation depth actually reached
-		int m_Candidates = 0; // plans evaluated
-		float m_Score = 0.0f; // cost of the winning plan (lower is better)
-		float m_CostMs = 0.0f; // wall clock spent in the engine
-		char m_aReason[64] = ""; // short human readable explanation for the HUD
-	};
+	// The data contract of the decision engine. The layout lives in avoid_engine.h (it is the
+	// interface between the client component and the unit tested planner); the names stay
+	// `CAvoid::...` so every existing caller keeps working.
+	using SSettings = Avoid::SSettings;
+	using SThreat = Avoid::SThreat;
+	using SContext = Avoid::SContext;
+	using SInputPlan = Avoid::SInputPlan;
 
 	// Live values the menu and the HUD display.
 	struct STelemetry
@@ -205,7 +149,7 @@ public:
 	// Basic mode only rewrites `m_Direction`; the remaining candidate plans of the later agents
 	// (jump / hook / aim) will slot into the same simulation loop.
 	static constexpr int MAX_CANDIDATES = 8;
-	static constexpr int MAX_SIM_TICKS = 50;
+	static constexpr int MAX_SIM_TICKS = Avoid::MAX_SIM_TICKS;
 	SInputPlan EvaluateBestPlan(const SContext &Ctx);
 
 	static const char *StateName(int State);
@@ -238,6 +182,16 @@ private:
 	int SimulateInput(const SContext &Ctx, const CNetObj_PlayerInput &Input, int MaxTicks,
 		vec2 *pOutPos = nullptr, vec2 *pOutVel = nullptr);
 	void LogTrace(const char *pTag, const SContext &Ctx, int SafeTicks, int Limit, const SInputPlan &Plan) const;
+
+	// The Legit agent (stage 3). Owns the search buffers; the environment has to stay valid for the
+	// duration of the call only.
+	Avoid::CPlanner m_Planner;
+	SInputPlan PlanLegit(const SContext &Ctx);
+	// The clone world of the current decision: the live world, or the practice sandbox world while
+	// the TAS sandbox owns the physics. `WithPlayers` adds the predicted player snapshots.
+	Avoid::SEnvironment BuildEnvironment(const SContext &Ctx, bool WithPlayers) const;
+	// Hammer fly / deep fly detection, the one movement state the engine cannot see on its own.
+	int FlyHammerState(const SContext &Ctx) const;
 
 	const CCharacterCore *ActiveCore(int *pClientId, bool *pIsDummy) const;
 	SSettings ReadSettings() const;
