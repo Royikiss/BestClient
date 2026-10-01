@@ -1,10 +1,10 @@
 # BestClient 避障 (Avoid / Gores Bot) 技术架构与开发交付文档
 
 > **面向后续开发人员与 AI Agent 的完整技术规范**
-> **文档版本**: 1.0.2 (阶段一交付 + HUD 模块化 + 重影修复 + HUD 渲染阶段修正)
+> **文档版本**: 1.1.1 (阶段二 Basic 交付 + 感知半径介入距离修复)
 > **适用代码分支**: `feature/tas`
-> **最后更新**: 2026-10-01 (v1.0.2: HUD 面板被地图前景墙遮挡的修复)
-> **本阶段交付**: 完整界面 + 完整输入管线 + 完整危险感知层 + **决策引擎留空（阶段二实现）**
+> **最后更新**: 2026-10-01 (v1.1.1: 感知半径闸门，介入距离随滑条变化)
+> **本阶段交付**: 完整界面 + 完整输入管线 + 完整危险感知层 + **Basic 决策引擎（Legit / Blatant 留待阶段三）**
 
 ---
 
@@ -13,10 +13,11 @@
 > 这份文档是**自解释**的：只读本节也能安全接手。详细内容在后续章节。
 
 1. **任务来源**：复刻参考客户端（KRX，闭源）的 Avoid / Gores Bot 功能，需求原文见 [1.1](#11-需求原文用户描述的目标体验)。
-2. **当前进度**：界面、配置、危险感知层、输入拦截管线、HUD 全部完成（[0.1](#01-本次做了什么)）。
-   **唯一没写的是决策算法**。
-3. **唯一要填的函数**：`CAvoid::EvaluateBestPlan(const SContext &Ctx)`，位于
-   `src/game/client/components/bestclient/avoid.cpp` 第 574 行附近，函数体内有 `STAGE 2 IMPLEMENTATION SLOT` 标记。
+2. **当前进度**：界面、配置、危险感知层、输入拦截管线、HUD 全部完成（[0.1](#01-本次做了什么)），
+   **Basic 代理的决策引擎已完成（v1.1.0）**；Legit / Blatant / Fentbot / Pilot 的算法仍待实现。
+3. **决策引擎入口**：`CAvoid::EvaluateBestPlan(const SContext &Ctx)`，位于
+   `src/game/client/components/bestclient/avoid.cpp`。它调用的前向模拟器是
+   `CAvoid::SimulateInput()` —— **后面所有代理（含 MCTS）都复用它**，见 [6.7](#67-basic-代理实现说明v110)。
 4. **不要改接口**：`SContext`（输入）与 `SInputPlan`（输出）已经接好写回通路、性能计时、UI 显示与状态机，
    直接填算法即可，见 [6.1](#61-函数签名与契约)。
 5. **写回方式**：只需要填 `Plan.m_Input` 并置 `Plan.m_Override = true`，
@@ -27,11 +28,17 @@
 8. **改完必须做的三件事**：`ninja -C build DDNet`；跑 [附录 D](#附录-d回归自检脚本) 的自检脚本；
    更新本文档的 [附录 C 变更历史](#附录-c变更历史)。
 
-**阶段二任务书已经写好在 [附录 A](#附录-a阶段二任务书可直接交给下一个-ai)，可以整体复制给下一个 AI。**
+**阶段三任务书已经写好在 [附录 A](#附录-a阶段二任务书可直接交给下一个-ai)，可以整体复制给下一个 AI。**
 
-> 建议按切片推进：**先做 [`docs/AVOID_STAGE2_BASIC_PROMPT.md`](AVOID_STAGE2_BASIC_PROMPT.md)**
-> （Basic 模式的方向键制动 + 前向模拟器，覆盖三条验收里的前两条），
-> 完成后再整体交附录 A 的任务书（钩子释放、MCTS、NSIF、Track Point）。
+> 推进方式：**Basic 已完成**（[`docs/AVOID_STAGE2_BASIC_PROMPT.md`](AVOID_STAGE2_BASIC_PROMPT.md) 的任务书，
+> 覆盖三条验收里的"走"与"荡"）。
+> **下一档是 Legit**：[`docs/AVOID_STAGE3_LEGIT_PROMPT.md`](AVOID_STAGE3_LEGIT_PROMPT.md)
+> （钩子释放 + 跳跃 + MCTS + 其他玩家预测），整档交给下一个 AI 即可。
+> 分档与依赖关系见 [附录 F](#附录-f交付分档与路线图)；
+> 附录 A 是最初的完整阶段二任务书，其中"第 1 步 前向模拟器"**已经做完**
+> （`CAvoid::SimulateInput()`，见 [6.7](#67-basic-代理实现说明v110)），从"第 2 步"之后的思路仍然有效，
+> 但**不要再直接把附录 A 当任务书下发**（它把 Track Point / 内置瞄准和 Legit 混在一起了，
+> 那两项属于阶段四 Blatant）。
 
 ---
 
@@ -50,16 +57,18 @@
 | D7 | 控制台命令 `avoid_toggle` / `avoid_status` / `avoid_reset` | ✅ 完成 |
 | D8 | 中英俄三语本地化词条（中文 95 条 + 俄文 95 条） | ✅ 完成 |
 | D9 | **输入管线自检开关**（`bc_avoid_debug_override`）：强制接管并反转左右键，用于证明拦截管线端到端有效 | ✅ 完成 |
-| D10 | **决策引擎 `CAvoid::EvaluateBestPlan()`** | ❌ **留空，阶段二实现** |
+| D10 | **决策引擎 `CAvoid::EvaluateBestPlan()`** | ✅ **Basic 完成 (v1.1.0)**；Legit/Blatant/Fentbot/Pilot 仍待实现 |
 | D11 | **游戏内 AVOID 面板接入 HUD 编辑器**（`HudLayout::MODULE_AVOID`）：可拖动、缩放、调透明度、持久化，内容与设置页一致 | ✅ 完成 (v1.0.1) |
 | D12 | **危险圆环重影修复**：世界空间叠加层改锚定角色实际渲染位置 | ✅ 完成 (v1.0.1) |
 | D13 | **HUD 面板被地图前景墙遮挡的修复**：`m_Tas` / `m_Avoid` 从世界渲染阶段移入 HUD 渲染阶段 | ✅ 完成 (v1.0.2) |
+| D14 | **前向模拟器 `CAvoid::SimulateInput()`**：克隆 `CCharacterCore`，用地图 tuning + `ClassifyPoint()` 推演 N 帧 | ✅ 完成 (v1.1.0) |
+| D15 | **Basic 决策**：`{-1, 0, +1}` 三方向候选 + 快路径/介入阈值/NSIF，只改 `m_Direction` | ✅ 完成 (v1.1.0) |
+| D16 | **模拟器保真度回归测试** `src/test/avoid_sim_test.cpp`（3 个用例，`ninja -C build testrunner`） | ✅ 完成 (v1.1.0) |
 
 > [!IMPORTANT]
-> **阶段二唯一需要写的函数就是 `CAvoid::EvaluateBestPlan(const SContext &Ctx)`。**
-> 它的输入结构 (`SContext`)、输出结构 (`SInputPlan`)、调用时机、写回通路、性能计时、
-> 状态显示、UI 参数、控制台命令全部已经接好。**不要改动这些接口**，只填搜索算法。
-> 详见 [第 6 章](#6-阶段二实现指南决策引擎唯一空槽)。
+> **阶段三需要做的是**：把候选集从"三个方向键"扩展到"方向 × 跳跃 × 钩子 × 瞄准"，
+> 并把打分换成 MCTS。**前向模拟器（D14）不用重写**——它是所有代理的公共地基。
+> 详见 [第 6 章](#6-决策引擎实现指南) 与 [6.7](#67-basic-代理实现说明v110)。
 
 ### 0.2 当前实际行为（验收时你会看到什么）
 
@@ -73,12 +82,20 @@
   默认关闭，不会打扰不使用避障的玩家。
 * 打开 `bc_avoid_show_visuals 1` 后，世界里会高亮标出感知半径内所有危险图块，并画出感知环与指向最近威胁的连线。
 
-**但是：目前无论你怎么走向黑水，角色都不会被自动减速或拉住**——因为决策引擎是空实现（`Plan.m_Override` 恒为 `false`），状态栏会明确显示 `决策: 引擎待实现 (阶段二)`。
+**Basic 代理已经能用了**：勾选"启用避障代理"（Basic 模式）后，朝黑水/冻结块走过去会被反向按键刹停，
+钩索荡向危险时也会自动按下反方向的键减速。**玩家本身安全的 tick 完全不干预**——
+状态徽章在 `WATCH`（观察）与 `ASSIST`（接管）之间切换，每一次接管都会在"安全前瞻"里给出存活帧数。
 
-这是**故意的**，符合"每次只开发一个核心功能、先把界面和管线做扎实"的最小单元开发原则。
+**仍然不做的事**（属于阶段三）：
 
-**例外**：左栏总控里的 **输入管线自检**（`bc_avoid_debug_override`）会强制接管并反转左右键，
-这是专门用来验证"拦截管线真的能操控角色"的调试开关，默认关闭。验证步骤见 [8.3](#83-输入拦截管线验证)。
+* **不会松开钩子**：朝贴有黑水的墙勾过去时，Basic 只会用左右键减速，不会提前脱钩（验收第 3 条留给阶段三）；
+* **不会跳跃、不会瞄准、不会开火**：Basic 只改 `m_Direction`，其余字段原样保留玩家输入；
+* **不预测其他玩家**：模拟器只推算自己（`bc_avoid_player_prediction` 目前不影响 Basic）；
+* Legit / Blatant / Fentbot / Pilot 的算法仍是占位（切到这些模式不会生效，状态栏会显示原因）。
+
+**调试开关**：左栏总控里的 **输入管线自检**（`bc_avoid_debug_override`）会强制接管并反转左右键，
+这是专门用来验证"拦截管线真的能操控角色"的调试开关，默认关闭。验证步骤见 [8.4](#84-输入拦截管线验证bc_avoid_debug_override)；
+`bc_avoid_log 1` 会每 tick 打印一行决策日志（见 [6.7](#67-basic-代理实现说明v110)）。
 
 ---
 
@@ -444,7 +461,14 @@ TAS 原页面用满 500 px，在 UiScale 110 下底部会被裁掉；避障页�
 > 防止刚重生/传送后平滑位置尚未跟上时画到旧位置。
 > 图块扫描本身仍以物理核心位置为准（`Core.m_Pos`），所以判定精度不受影响。
 
-## 6. 阶段二实现指南：决策引擎（唯一空槽）
+## 6. 决策引擎实现指南
+
+> **实现状态（v1.1.0）**：**Basic 部分已实现** —— 前向模拟器 `CAvoid::SimulateInput()` 与
+> 只改 `m_Direction` 的三方向候选决策都在 `avoid.cpp` 里跑通了（见 [6.7](#67-basic-代理实现说明v110)）。
+> **Legit / Blatant / Fentbot / Pilot 仍待实现**：候选集扩展（跳跃 / 钩子 / 瞄准）、
+> MCTS + NSIF 搜索、钩子释放、Track Point、Auto Drag、内置瞄准都还是空的，
+> 参数面板里这些代理的参数目前不影响任何行为。
+> 6.1–6.6 仍然是把它们接上去时的契约与参考实现指南；6.7 记录 Basic 实际是怎么写的。
 
 ### 6.1 函数签名与契约
 
@@ -477,11 +501,11 @@ struct SInputPlan
 	bool m_UsedFallback;         // true = NSIF 兜底（没有任何方案能活满前瞻）
 	CNetObj_PlayerInput m_Input; // 必须从 Ctx.m_Input 复制后修改，不要从零构造
 	int m_SafeTicks;             // 所选方案能存活的帧数
-	int m_ScannedTicks;          // 实际模拟到的深度
+	int m_ScannedTicks;          // 所有候选里模拟到的最深帧数（= 本次搜索的实际深度）
 	int m_Candidates;            // 本帧评估的方案数
-	float m_Score;               // 最优方案代价（越小越好）
+	float m_Score;               // 最优方案得分（越大越好；Basic 用生存帧数主导）
 	float m_CostMs;              // 引擎自身耗时（毫秒），会显示在 UI 上
-	char m_aReason[64];          // 给 HUD 看的短说明（建议 BcLocalize(...)）
+	char m_aReason[64];          // 给 HUD 看的短说明（必须走 BcLocalize(...)）
 };
 ```
 
@@ -560,12 +584,112 @@ struct SInputPlan
 
 ### 6.6 建议的实现顺序（阶段二拆成 4 个小步）
 
-1. **前向模拟器**：写 `bool SimulateInput(const SContext&, const CNetObj_PlayerInput&, int MaxTicks, int &SafeTicks)`，
-   先用 `bc_avoid_log 1` 打印每帧位置与判定，与游戏内实际轨迹目测校准。
-2. **方向键制动**（覆盖"走"与"荡"两个验收场景）：只允许改 `m_Direction`，`m_Override` 生效，
-   验收：朝黑水走会被停住；钩索荡向黑水会被反向键减速。
-3. **钩子释放**（覆盖"勾"场景）：允许改 `m_Hook`，验收：朝黑水墙勾过去会在贴墙前脱钩。
-4. **升级为 MCTS + NSIF + Track Point + 内置瞄准**，并把 Fentbot / Pilot 的占位参数接上。
+1. ✅ **前向模拟器**（v1.1.0 完成）：`int CAvoid::SimulateInput(const SContext&, const CNetObj_PlayerInput&, int MaxTicks, vec2 *pOutPos, vec2 *pOutVel)`，
+   用 `bc_avoid_log 1` 打印每 tick 位置与判定，与游戏内实际轨迹目测校准。
+2. ✅ **方向键制动**（v1.1.0 完成，覆盖"走"与"荡"两个验收场景）：只允许改 `m_Direction`，`m_Override` 生效。
+3. ⬜ **钩子释放**（覆盖"勾"场景）：允许改 `m_Hook`，验收：朝黑水墙勾过去会在贴墙前脱钩。
+4. ⬜ **升级为 MCTS + NSIF + Track Point + 内置瞄准**，并把 Fentbot / Pilot 的占位参数接上。
+
+### 6.7 Basic 代理实现说明（v1.1.0）
+
+> 这一节记录 6.1–6.6 落实成代码时**实际**做的选择，以及留给阶段三的已知不足。
+
+**模拟器走的是路径 A（轻量复刻），但只复刻"步进"，公式仍然由引擎执行**：
+
+```cpp
+// CAvoid::SimulateInput()（avoid.cpp）
+CCharacterCore Sim;            // 栈上克隆，绝不碰真实实体
+Sim.Reset();                   // 清掉 m_pWorld / m_pTeams / m_HookedPlayer
+Sim.SetCoreWorld(World, Collision(), Teams);
+Sim.m_Pos = Ctx.m_Core.m_Pos;  // …只搬运物理状态（位置/速度/钩索/跳跃/切换/冻结/静音/tuning）
+Sim.m_Tuning = Ctx.m_Core.m_Tuning;   // ← 地图 tuning，绝不硬编码
+Sim.m_Id = 0;                  // 把克隆从所有队伍相关分支里摘出去
+Sim.m_Input = Input;
+while(Safe < Depth) { Sim.Tick(true, false); Sim.Move(); if(IsRelevantHazard(ClassifyPoint(Sim.m_Pos))) break; Safe++; }
+```
+
+* **为什么不是"自己写加速度公式"**：直接调用 `CCharacterCore::Tick()` / `Move()`，
+  物理公式就永远是引擎那一份，不存在"复刻走样"的可能；需要与引擎一致的只有**状态搬运清单**。
+* **为什么 `DoDeferredTick = false`**：`TickDeferred()` 会遍历 `m_pWorld->m_apCharacters[]` 并走
+  `m_pTeams->CanCollide()`。克隆没有本体世界，传 `false` 同时回避了空指针和"打乱分身物理"两个坑。
+  Basic 因此**不预测其他玩家**（`bc_avoid_player_prediction` 暂时不生效）。
+* **克隆里的 `m_Id = 0`**：`GetMoveRestrictions()` 会调 `IsSwitchActiveCb`，而回调在 `m_pWorld`
+  为空时才短路；给个合法 id 就能让开关块（switch）在模拟里也保持一致，同时不触碰队伍逻辑。
+* **碰撞指针**：`CCollision` 被游戏世界、TAS 沙盒和感知层共用（`avoid.h` 里 `Collision()`），
+  所以模拟和真实角色跑在完全相同的几何上；`Reset()` 之后即使指针缺失也只会退化成无碰撞推演。
+* **危险判定**：每一帧都用 `IsRelevantHazard(ClassifyPoint(Sim.m_Pos))`，探测点与
+  `CCharacter::HandleTiles()` / `HandleSkippableTiles()` 逐条一致（见 4.2），
+  所以"感知说危险"和"物理说危险"不可能错位。
+
+**决策规则（`EvaluateBestPlan()`，Basic 只改 `m_Direction`）**：
+
+| 顺序 | 条件 | 结果 |
+| :--- | :--- | :--- |
+| 0 | `bc_avoid_debug_override` | 强制接管并反转左右键（阶段一自检开关，优先级最高） |
+| 1 | 无地图 / `HAZ_SELF`（已冻结） | 不干预，理由写进 HUD（`no map data` / `frozen, agent idle`） |
+| 2 | **感知半径内没有任何相关危险**（`m_Threat.m_HasNearest == false`） | **不干预**（`no hazard within sensing range`）——见下方"感知半径的作用" |
+| 3 | 玩家自己的输入能活满 `CheckTicks` | **不干预**（`player input safe`） |
+| 4 | 玩家输入还能活 ≥ `KickInTicks` | **不干预**（`still time before the hazard`） |
+| 5 | 候选 `{-1, 0, +1}`（玩家方向恒在集合内；`direction_assist` 关闭时只剩玩家方向） | 逐个模拟 `CheckTicks` 帧 |
+| 6 | 有候选活满，**或**活得更久且方向不同 | **接管**，写 `m_Direction`，`m_Override = true` |
+| 7 | 最好的也活不满 | `m_Override = true` + `m_UsedFallback = true`（NSIF，红徽章） |
+| 8 | 其他（并列、玩家方向已是最优） | **不干预**（`no safer direction`） |
+
+**感知半径的作用（`bc_avoid_sensing_radius`，2~16 图块）：**
+
+模拟器本身**没有**距离上限——它把 tee 一帧帧往前推，推到哪里就查哪里的 `ClassifyPoint()`。
+这让物理预测很精确，但也意味着**如果不加限制，代理会去躲感知范围之外的十万八千里外的危险**。
+所以决策引擎的第 0 层（上表第 2 行）显式用感知层的结果做闸门：
+
+* `ScanThreat()` 只会对通过 `IsRelevantHazard()` 的图块置 `m_HasNearest`，
+  所以这一个标志同时折叠了**感知半径**与全部 `bc_avoid_tile_*` 开关；
+* 半径越大 → 越早发现 → **刹车点离危险越远**；半径越小 → 越晚介入；
+* 闸门同时受 `KickInTicks` 约束：**它只决定"能不能开始管"，不决定"管多久"**。
+  半径很大时，真正拦住代理的是 `check_ticks` 的前瞻窗口，
+  所以半径超过约 8 图块后，再往上调在平地上就感觉不出差别了（这点已被测试固定下来）。
+
+实测（`CAvoidSensingRadiusTest`，合成地图、平地全速行走、`check_ticks = 26`）：
+
+| 感知半径 | 开始刹车的距离（tee 中心 → 危险图块边缘） |
+| :--- | :--- |
+| 2（下限） | ≈ 2 图块（64 px），刹停后仍留有余量 |
+| 6（默认） | ≈ 6 图块（190 px） |
+| 8 ~ 16 | 不再增长（改由 `check_ticks` 决定） |
+
+> [!IMPORTANT]
+> **半径下限是安全的**：以默认 tuning（`ground_control_speed = 10`、
+> `ground_control_accel = 2 px/tick²`）计算，从全速刹停只需要 **5 帧、约 25 px**，
+> 在半径 2（64 px 余量）内绰绰有余。所以整条滑条都是可用的，
+> 只是"反应早晚"不同，不存在"调到最小就刹不住"的情况。
+
+* **打分**：`score = m_LifeWeight * 存活帧数 - m_DirectionWeight * |候选方向 - 玩家方向|`。
+  生存是硬指标，方向权重只在"活一样久"时决定谁更省事；**并列时永远选玩家自己的方向**，
+  这样"宁可少管不多管"是结构上保证的，不是靠调参。
+* **钩子 / 跳跃 / 瞄准 / 武器字段**：整份 `Ctx.m_Input` 原样复制后只改 `m_Direction`，
+  所以 `m_PlayerFlags` / `m_NextWeapon` / `m_PrevWeapon` / `m_WShots` 等全部保留（见 6.5 第 2 条）。
+* **性能**：每 tick 最多 `1 + 3 = 4` 次模拟 × `CheckTicks`（默认 26）帧。`Plan.m_CostMs` 用
+  `time_get()` 真实测量并直接显示在 UI 上。离线的**最坏情况基准**（`CAvoidSimulatorTest.WorstCaseDecisionCostStaysInsideTheTickBudget`，
+  4 个候选 × 26 帧 × 2000 次决策）实测 **约 0.02 ms / 决策**（`-O3`，单候选约 0.006 ms），
+  相对 1.5 ms 的每 tick 预算还有 60 倍以上余量（Release 构建下的一般结论；Debug 构建会明显更慢）。
+  决策路径里没有任何堆分配：候选样本放在定长成员数组 `m_aSamples[MAX_CANDIDATES]` 里，克隆体在栈上。
+
+**调试与校准**：
+
+* `bc_avoid_log 1`：每个决策 tick 打印一行
+  `tick / pos(图块) / vel / threat / hazard / player safe N/CheckTicks / override / safe / reason`。
+  沿着黑水边走边看 `player safe` 掉到多少，就能判断模拟器与肉眼轨迹是否一致。
+* `bc_avoid_show_visuals 1`：世界里画出感知半径、危险图块与最近威胁连线，用来对照日志里的坐标。
+* `ninja -C build testrunner && ./build/testrunner --gtest_filter='CAvoidSimulatorTest.*'`：
+  3 个回归用例，锁住"克隆步进 == 引擎步进"、"真实地图上可复现"、"物理跟随地图 tuning"。
+
+**已知不足（留给阶段三）**：
+
+1. 不预测其他玩家：被队友/敌人撞进危险的场景不会被拦（`bc_avoid_player_prediction` 无效）。
+2. 不松钩：勾向黑水墙时只能反向减速，"提前脱钩"要等阶段三（见 6.5 第 6 条）。
+3. 候选集只有三个方向键：没有跳跃、没有瞄准，所以"必须跳一下才能活"的局面会退化成 NSIF。
+4. 前瞻是从**上一 tick 的核心状态**（`m_aClients[].m_Predicted`）出发的，比当前渲染帧晚 1 tick；
+   20 ms 的滞后在 26 帧窗口里可以忽略，但阶段三做钩索释放时值得复核。
+5. `Randomness` / `Quality` / `HookWeight` 等参数对 Basic 无影响（Basic 是确定性穷举，忠于参考实现）。
 
 ---
 
@@ -607,7 +731,7 @@ struct SInputPlan
 | `bc_avoid_show_hud` | int | `1` | 0~1 | AVOID HUD 总开关（还需 HUD 编辑器里的 `Avoid` 模块处于开启状态） |
 | `bc_avoid_show_visuals` | int | `0` | 0~1 | 世界空间威胁可视化 |
 | `bc_avoid_log` | int | `0` | 0~1 | 决策日志输出到控制台 |
-| `bc_avoid_debug_override` | int | `0` | 0~1 | **输入管线自检**：强制每帧接管并反转左右方向键，用于验证拦截管线（见 [8.3](#83-输入拦截管线验证)） |
+| `bc_avoid_debug_override` | int | `0` | 0~1 | **输入管线自检**：强制每帧接管并反转左右方向键，用于验证拦截管线（见 [8.4](#84-输入拦截管线验证bc_avoid_debug_override)） |
 
 ### 7.1 控制台命令
 
@@ -655,10 +779,27 @@ bind X toggle bc_avoid_active 1 0
 | 把 `Tiles` 面板的 **死亡块** 取消勾选 | `危险 / 已探测` 的分子立刻下降，`角色` 行不再显示 DEATH | 分类结果按配置实时过滤（`IsRelevantHazard`） |
 | 拖动 **感知半径** | `危险 / 已探测` 的**分母**变化：半径 2 → 25，半径 6 → 169，半径 16 → 1089（公式 `(2r+1)²`） | 扫描半径真的改变了采样规模 |
 
-### 8.3 输入拦截管线验证
+### 8.3 Basic 代理验收（v1.1.0 起）
 
-现在的决策引擎是空实现，所以**必须用自检开关**来证明"拦截到的输入真的能操控角色"，
-而不是只看代码。自检开关会强制每帧接管，并把左右方向键取反：
+前提：一张有黑水/冻结块的图，Basic 模式，勾选 **启用避障代理**（或 `avoid_toggle`）。
+把 `bc_avoid_log 1` 打开可以同时看到每 tick 的决策日志（`player safe N/26` 是最有用的一列）。
+
+| # | 操作 | 期望结果 | 证明了什么 |
+| :--- | :--- | :--- | :--- |
+| 1 | 什么都不按，站在空地 | `接管` 计数**不增长**；状态徽章停在绿色 `WATCH`；日志里 `override no`、`player safe 26/26` | 玩家安全时零干预（手感生命线） |
+| 2 | 按住 D 直冲黑水 | 接触前 **1~2 图块**内被刹停或明显减速；徽章转橙色 `ASSIST`，`Plan` 显示 `在危险前刹停` / `向左减速`，接管 +1 | 验收第 1 条：走向黑水被停住 |
+| 3 | 钩住一侧地面，荡向黑水 | 出现反向按键制动，速度明显下降（**不会**自动松钩，这是阶段三） | 验收第 2 条：荡向危险被反向键减速 |
+| 4 | 直行穿过黑水旁的窄通道 | **不出现**莫名其妙的减速；`接管` 不增长 | 验收第 3 条：探测点正确、无误触发 |
+| 5 | `avoid_status` 的 `cost` | 稳定 ≤ 1.5 ms（实测约 0.02 ms，见 6.7） | 性能预算达标（见 6.4） |
+| 6 | 走进冻结块 | 徽章仍为 `WATCH`，`Plan` 显示 `已冻结，代理待机` | `HAZ_SELF` 优先于一切（6.5 第 4 条） |
+| 7 | 关掉 `Tiles` 面板的 **死亡块** | 走向黑水不再被拦（因为黑水不再算危险） | 危险判定确实走 `IsRelevantHazard()` 配置 |
+| 8 | 把 **感知半径** 从 6 调到 2，再朝黑水走 | **明显更晚**才开始减速（半径 6 约 6 图块外就刹车，半径 2 约 2 图块）；调到 12 则与 6 差不多 | 半径是真正的介入距离控制（见 6.7） |
+| 9 | 反复开关代理再走一段 | 不崩溃、不卡顿、无异常日志 | 状态机与缓存计划（`m_LastPlan`）安全 |
+
+### 8.4 输入拦截管线验证（`bc_avoid_debug_override`）
+
+要单独证明"拦截到的输入真的能操控角色"，而不是只看决策日志，用这个自检开关：
+它会强制每帧接管，并把左右方向键取反。
 
 1. 左栏 **总控** 卡片勾选 **输入管线自检**（等价于控制台 `bc_avoid_debug_override 1`）
 2. 顶部状态徽章变为橙色 **ASSIST**，`Plan` 行显示 **调试接管 (输入管线自检)**，`接管` 计数开始每帧累加
@@ -667,12 +808,42 @@ bind X toggle bc_avoid_active 1 0
 4. 取消勾选，行为立刻恢复正常
 5. 控制台 `avoid_status` 会打印 `decisions` 与 `overrides`：
    - `decisions` 每 tick +1（约 50/秒）→ 说明 `ApplyInput()` 确实以 50 Hz 被调用
-   - 自检开启时 `overrides == decisions`；关闭时 `overrides` 不再增长 → 说明写回通路是受控的
+   - 自检开启时 `overrides == decisions`；关闭时 `overrides` 只在 Basic 真接管时才增长 → 说明写回通路是受控的
 
 > [!NOTE]
-> 自检开关默认关闭，且只在勾选时生效；它是阶段二调试时的常备工具，不是产品功能。
+> 自检开关默认关闭，且只在勾选时生效；它是调试时的常备工具，不是产品功能。
 
-### 8.4 游戏内 HUD 模块与威胁可视化验证
+### 8.5 模拟器离线回归（不需要开游戏）
+
+```bash
+ninja -C build testrunner
+./build/testrunner --gtest_filter='CAvoidSimulatorTest.*'
+```
+
+3 个用例分别锁住：
+
+1. `StepRecipeMatchesTheEngineTickSequence` —— 模拟器的步进序列（`Tick(true,false)` + `Move()`）
+   与引擎的 `Tick(true,true)` + `Move()` 在真实地图上**逐帧完全一致**（含钩索飞行、跳跃、撞墙）；
+2. `WalkingAcrossTheRealMapIsReproducible` —— 50 帧行走不穿墙、不出 NaN；
+3. `MapTuningDrivesThePrediction` —— 换一份 tuning（`ground_control_speed` 10 → 5）会得到不同轨迹，
+   也就是"物理真的跟随地图 tuning"，这条是"禁止硬编码常量"的回归护栏；
+4. `WorstCaseDecisionCostStaysInsideTheTickBudget` —— 打印最坏情况的每决策耗时并与 1.5 ms 预算对比
+   （见 [6.7](#67-basic-代理实现说明v110) 的性能段）。
+
+感知半径另有一组测试（`src/test/avoid_sensing_radius_test.cpp`，自带合成地图所以数字是精确的）：
+
+```bash
+./build/testrunner --gtest_filter='CAvoidSensingRadiusTest.*'
+```
+
+| 用例 | 锁住的行为 |
+| :--- | :--- |
+| `BrakesInTimeAcrossTheWholeRadiusRange` | 半径 2~16 每一档都能在撞上危险前刹停 |
+| `WiderRadiusReactsFurtherFromTheHazard` | 半径越大刹车点越远（半径 6 比半径 2 早 4 图块以上） |
+| `MinimumRadiusStillFitsTheBrakingDistance` | 最小半径下"发现危险 → 需要刹停"仍有足够帧数 |
+| `CheckTicksTakesOverAtLargeRadii` | 半径很大时改为由 `check_ticks` 决定，反应距离不再增长 |
+
+### 8.6 游戏内 HUD 模块与威胁可视化验证
 
 | 操作 | 期望观察 |
 | :--- | :--- |
@@ -687,13 +858,15 @@ bind X toggle bc_avoid_active 1 0
 | 走进冻结块 | 面板"角色"行变蓝显示 `FREEZE`，圆环与方框颜色一致 |
 | 拖动 **感知半径** | 世界里的圆环与高亮范围随之放大/缩小；面板"危险 / 探测"分母同步变化 |
 
-### 8.5 证据对照表（"你说的三层"对应可观察的证据）
+### 8.7 证据对照表（每一层能力对应可观察的证据）
 
 | 声称的能力 | 直接证据 | 章节 |
 | :--- | :--- | :--- |
 | 危险感知层 | 实时状态卡片的距离/计数随移动与图块开关实时变化 | [8.2](#82-危险感知层验证) |
-| 输入拦截管线 | 自检开关下角色反向移动 + `decisions` 以 50 Hz 增长 | [8.3](#83-输入拦截管线验证) |
-| 游戏内 HUD / 可视化 | 可在 HUD 编辑器里拖动的 AVOID 面板 + 世界中彩色图块、圆环、连线 | [8.4](#84-游戏内-hud-模块与威胁可视化验证) |
+| 输入拦截管线 | 自检开关下角色反向移动 + `decisions` 以 50 Hz 增长 | [8.4](#84-输入拦截管线验证bc_avoid_debug_override) |
+| **Basic 决策（走 / 荡）** | 朝黑水走被刹停、荡向黑水被反向键减速；`接管` 与 `Plan` 行实时变化 | [8.3](#83-basic-代理验收v110-起) |
+| **前向模拟器正确性** | 离线回归：与引擎步进逐帧一致 + 跟随地图 tuning | [8.5](#85-模拟器离线回归不需要开游戏) |
+| 游戏内 HUD / 可视化 | 可在 HUD 编辑器里拖动的 AVOID 面板 + 世界中彩色图块、圆环、连线 | [8.6](#86-游戏内-hud-模块与威胁可视化验证) |
 
 ## 9. 编译与回归验证
 
@@ -705,7 +878,8 @@ ninja -C build DDNet
 python3 - <<'PY'
 import io
 keys = ["Avoid", "Assist mode", "Arm Avoid agent", "Check ticks", "NSIF on no safe input",
-        "Basic", "Legit", "Blatant", "Input pipeline self-test"]
+        "Basic", "Legit", "Blatant", "Input pipeline self-test",
+        "brake before hazard", "steer left before hazard", "player input safe"]
 for path in ("data/BestClient/languages/simplified_chinese.txt",
              "data/BestClient/languages/russian.txt"):
     text = open(path, encoding="utf-8").read()
@@ -722,8 +896,9 @@ assert n == 33, n
 print("avoid cvars OK:", n)
 PY
 
-# 4. 确认决策引擎仍是唯一空槽（阶段二完成后应改为检查实现存在）
-grep -n "STAGE 2 IMPLEMENTATION SLOT" src/game/client/components/bestclient/avoid.cpp
+# 4. 决策引擎实现存在（v1.1.0 起不再是空槽），且模拟器回归测试通过
+grep -n "CAvoid::SimulateInput" src/game/client/components/bestclient/avoid.cpp
+ninja -C build testrunner && ./build/testrunner --gtest_filter='CAvoidSimulatorTest.*'
 ```
 
 ---
@@ -732,13 +907,14 @@ grep -n "STAGE 2 IMPLEMENTATION SLOT" src/game/client/components/bestclient/avoi
 
 | 风险 | 说明 | 处理建议 |
 | :--- | :--- | :--- |
-| **决策引擎为空** | 本阶段不产生任何实际避障效果，属预期 | 阶段二实现 6.1 契约 |
+| **Basic 只做方向键制动** | 不松钩、不跳跃、不瞄准（见 [6.7](#67-basic-代理实现说明v110) 已知不足） | 阶段三按附录 A 接钩子释放与 MCTS |
+| **模拟器不预测其他玩家** | 克隆体没有世界，`TickDeferred()` 被跳过，被撞进危险不会被拦 | 阶段三做 `m_PlayerPrediction` 时把其他角色位置作为静态障碍/速度场补进模拟 |
 | **状态徽章为英文短标签** | `WATCH / ASSIST / NSIF / AFK` 未本地化，与 TAS 页 `IDLE/REC` 风格一致 | 如需中文可在 `RenderSettingsAvoid` 里改用 `BcLocalize` |
 | **HUD 只在启用时显示** | 未启用代理且未开可视化时，游戏内不会出现 AVOID HUD（避免打扰普通玩家） | 如需常驻可自行放开 `CAvoid::OnRender()` 里的条件 |
 | **`bc_tas_tab` 语义变化** | 原 0=TAS / 1=辅助模块；现 0=TAS / 1=避障 / 2=辅助模块。老配置里值为 1 的用户打开 TAS& 会直接看到避障页 | 已知且可接受；如需兼容可加一次性迁移 |
-| **网络延迟下预测漂移** | 参考实现明确要求 `cl_prediction_margin` 略高于 ping（如 50ms ping 设 70） | 文档提示即可；阶段二可考虑在 UI 上给出建议值 |
+| **网络延迟下预测漂移** | 参考实现明确要求 `cl_prediction_margin` 略高于 ping（如 50ms ping 设 70） | 文档提示即可；后续可在 UI 上给出建议值 |
 | **UiScale 极高时底部裁切** | 布局总高 462 px，UiScale 110 时可用约 471 px，留有余量但不大 | 新增控件时必须复核 [5.1 节](#51-布局严格遵循左上角状态栏--左栏模式与状态--右栏参数) 的高度预算 |
-| **沙盒/实战感知一致性** | `ActiveCore()` 已兼容 TAS 本地沙盒，但阶段二的模拟器若走"沙盒克隆"路径需再验证 | 见 6.3 方案 B 的风险栏 |
+| **沙盒/实战感知一致性** | `ActiveCore()` 已兼容 TAS 本地沙盒，模拟器也改成从沙盒世界的 `m_Core` / `Teams()` 取世界与队伍指针 | 见 6.3 方案 B 的风险栏 |
 | **Fentbot / Pilot 仅有 UI** | 参数为只读占位，不含算法 | 阶段三实现；阶段二不要顺手改它们的语义 |
 
 ---
@@ -782,7 +958,7 @@ grep -n "STAGE 2 IMPLEMENTATION SLOT" src/game/client/components/bestclient/avoi
 
 ---
 
-*阶段一交付完成。下一步：按 [第 6 章](#6-阶段二实现指南决策引擎唯一空槽) 实现 `CAvoid::EvaluateBestPlan()`，不要改动任何既有接口。*
+*阶段二 Basic 交付完成（v1.1.0）。下一步：按 [第 6 章](#6-决策引擎实现指南) 与附录 A 实现钩子释放与 MCTS 搜索，不要改动任何既有接口。*
 
 
 ---
@@ -847,31 +1023,35 @@ grep -n "STAGE 2 IMPLEMENTATION SLOT" src/game/client/components/bestclient/avoi
 
 ## 附录 B：关键代码位置速查
 
-> 行号对应 v1.0.2，改动后会漂移；优先按函数名搜索。
+> 行号对应 v1.1.0，改动后会漂移；优先按函数名搜索。
 
 | 位置 | 内容 | 说明 |
 | :--- | :--- | :--- |
-| `avoid.cpp:574` | `CAvoid::EvaluateBestPlan()` | **唯一的空槽，阶段二在这里写算法** |
-| `avoid.cpp:469` | `CAvoid::ApplyInput()` | 每 tick 入口：感知 → 决策 → 写回 `pData` → 遥测 |
-| `avoid.cpp:538` | `CAvoid::UpdateTelemetry()` | 把感知/决策结果翻译成 UI 与 HUD 的读数 |
-| `avoid.cpp:308` | `CAvoid::ClassifyPoint()` | 危险探测点（中心点 + 四角），与引擎逐条对齐 |
-| `avoid.cpp:350` | `CAvoid::ScanThreat()` | 半径扫描 + 最近威胁（AABB 距离） |
-| `avoid.cpp:262` | `CAvoid::ClassifyTile()` | 图块 → 危险位掩码的纯映射 |
-| `avoid.cpp:300` | `CAvoid::IsRelevantHazard()` | 按 `bc_avoid_tile_*` 过滤危险类型 |
-| `avoid.cpp:398` | `CAvoid::ActiveCore()` | 取当前受控角色的物理核心（兼容 TAS 本地沙盒） |
-| `avoid.cpp:430` | `CAvoid::OverlayAnchor()` | 世界可视化锚点（角色实际渲染位置，重影修复点） |
-| `avoid.cpp:446` | `CAvoid::CheckAfkProtection()` | 挂机自动解除 |
-| `avoid.cpp:193` | `CAvoid::ReadSettings()` | cvar → `SSettings` 快照 |
-| `avoid.cpp:676` | `CAvoid::GetHudRect()` | HUD 模块矩形（画布坐标） |
-| `avoid.cpp:709` | `CAvoid::RenderHudModule()` | 游戏内面板绘制 |
-| `avoid.cpp:807` | `CAvoid::RenderWorldOverlay()` | 危险图块高亮 / 感知环 / 威胁连线 |
+| `avoid.cpp:578` | `CAvoid::SimulateInput()` | **阶段二前向模拟器**：克隆 `CCharacterCore` 推演 N 帧，返回存活帧数 |
+| `avoid.cpp:683` | `CAvoid::EvaluateBestPlan()` | **Basic 决策引擎**：快路径 → 介入阈值 → 三方向候选 → NSIF |
+| `avoid.cpp:667` | `CAvoid::LogTrace()` | `bc_avoid_log 1` 的每决策日志（校准模拟器用） |
+| `avoid.cpp:471` | `CAvoid::ApplyInput()` | 每 tick 入口：感知 → 决策 → 写回 `pData` → 遥测 |
+| `avoid.cpp:542` | `CAvoid::UpdateTelemetry()` | 把感知/决策结果翻译成 UI 与 HUD 的读数 |
+| `avoid.cpp:310` | `CAvoid::ClassifyPoint()` | 危险探测点（中心点 + 四角），与引擎逐条对齐 |
+| `avoid.cpp:352` | `CAvoid::ScanThreat()` | 半径扫描 + 最近威胁（AABB 距离） |
+| `avoid.cpp:264` | `CAvoid::ClassifyTile()` | 图块 → 危险位掩码的纯映射 |
+| `avoid.cpp:302` | `CAvoid::IsRelevantHazard()` | 按 `bc_avoid_tile_*` 过滤危险类型 |
+| `avoid.cpp:400` | `CAvoid::ActiveCore()` | 取当前受控角色的物理核心（兼容 TAS 本地沙盒） |
+| `avoid.cpp:432` | `CAvoid::OverlayAnchor()` | 世界可视化锚点（角色实际渲染位置，重影修复点） |
+| `avoid.cpp:448` | `CAvoid::CheckAfkProtection()` | 挂机自动解除 |
+| `avoid.cpp:195` | `CAvoid::ReadSettings()` | cvar → `SSettings` 快照 |
+| `avoid.cpp:873` | `CAvoid::GetHudRect()` | HUD 模块矩形（画布坐标） |
+| `avoid.cpp:906` | `CAvoid::RenderHudModule()` | 游戏内面板绘制 |
+| `avoid.cpp:1004` | `CAvoid::RenderWorldOverlay()` | 危险图块高亮 / 感知环 / 威胁连线 |
+| `avoid.h:204` | `MAX_CANDIDATES` / `MAX_SIM_TICKS` / `m_aSamples[]` | 决策路径的定长缓冲（无堆分配） |
+| `src/test/avoid_sim_test.cpp` | `CAvoidSimulatorTest` | 模拟器保真度回归（3 个用例） |
 | `menus_avoid.cpp:198` | `CMenus::RenderSettingsAvoid()` | 避障页（状态栏 + 左栏 + 右栏面板） |
 | `menus_avoid.cpp:46` | `g_aBasicPanels` 等面板表 | **每个模式的面板集合在这里定义** |
 | `hud_layout.h:40` | `MODULE_AVOID` | HUD 编辑器模块枚举 |
 | `hud_layout.cpp:47` | `gs_aModuleLayouts[MODULE_AVOID]` | 默认位置 `(286, 52)`、默认关闭 |
 | `hud_editor.cpp:528` | `GetModuleVisual()` 的 Avoid 分支 | 编辑器里的可拖动矩形 |
 | `gameclient.cpp:207` | `&m_Tas` / `&m_Avoid` 注册 | **必须留在 HUD 渲染阶段**（见 5.3 红线） |
-| `gameclient.cpp:647` | `OnSnapInput` 挂点 | 避障输入拦截入口 |
+| `gameclient.cpp:650` | `OnSnapInput` 挂点 | 避障输入拦截入口 |
 | `controls.cpp` | `SnapInput()` 里的 `WantsEveryTickInput()` | 代理启用时强制 50 Hz |
 | `config_variables_bestclient.h:609` | `bc_avoid_*` 共 33 个 | 配置面 |
 
@@ -884,6 +1064,8 @@ grep -n "STAGE 2 IMPLEMENTATION SLOT" src/game/client/components/bestclient/avoi
 | **1.0.0** | 2026-10-01 | 阶段一交付：避障子标签页、`CAvoid` 组件、33 个 cvar、危险感知层、输入拦截管线、HUD 与世界可视化、控制台命令、中俄本地化；决策引擎留空并写明契约 |
 | **1.0.1** | 2026-10-01 | ① AVOID 状态面板接入 HUD 编辑器（`MODULE_AVOID`，可拖动/缩放/调透明度/持久化），内容与设置页对齐；② 危险圆环重影修复（锚点改用角色实际渲染位置） |
 | **1.0.2** | 2026-10-01 | HUD 面板被地图前景墙遮挡的修复：`m_Tas` / `m_Avoid` 移入 HUD 渲染阶段；顺带修正非 16:9 下 HUD 宽高比计算 |
+| **1.1.1** | 2026-10-01 | **修复：感知半径对决策无效**。`bc_avoid_sensing_radius` 过去只喂给 `ScanThreat()`（HUD/可视化），决策引擎自己逐帧 `ClassifyPoint()` 无距离上限，导致滑条怎么调都在同一距离被刹住。现在 `EvaluateBestPlan()` 增加第 0 层闸门（`m_HasNearest`），半径真正决定介入距离；新增 `src/test/avoid_sensing_radius_test.cpp`（含合成地图夹具）4 个用例 + 2 条本地化词条 |
+| **1.1.0** | 2026-10-01 | **阶段二 Basic 交付**：① 前向模拟器 `CAvoid::SimulateInput()`（克隆 `CCharacterCore` + 地图 tuning + 复用 `ClassifyPoint()` 探测点）；② `CAvoid::EvaluateBestPlan()` 实现：快路径不干预、`KickInTicks` 介入阈值、`{-1,0,+1}` 三方向候选、NSIF 兜底，**只改 `m_Direction`**；③ `bc_avoid_log 1` 每决策日志；④ 12 条新界面/日志词条（中俄同步）；⑤ 新增保真度回归测试 `src/test/avoid_sim_test.cpp`（3 个用例）；⑥ 文档新增 [6.7](#67-basic-代理实现说明v110) 记录实现细节与已知不足 |
 
 ---
 
@@ -892,20 +1074,27 @@ grep -n "STAGE 2 IMPLEMENTATION SLOT" src/game/client/components/bestclient/avoi
 脚本已随仓库提供，改完任何与避障相关的代码后直接执行：
 
 ```bash
-./scripts/avoid_selfcheck.sh
-```
-
-脚本内容如下（每一步的 rationale 见正文对应章节）：
-
-```bash
 #!/usr/bin/env bash
-set -e
-cd "$(dirname "$0")/.."   # 仓库根目录
+# BestClient - Avoid (Gores bot) module self check.
+#
+# Run this after touching anything related to the Avoid module:
+#     ./scripts/avoid_selfcheck.sh
+#
+# See docs/AVOID_TECHNICAL_DOCUMENTATION.md (appendix D) for the rationale of every step.
 
-echo "[1/5] 编译"
+set -e
+
+cd "$(dirname "$0")/.."
+
+if [ ! -f build/build.ninja ]; then
+	echo "error: build/ is not configured; run cmake first" >&2
+	exit 1
+fi
+
+echo "[1/5] building"
 ninja -C build DDNet
 
-echo "[2/5] 配置变量数量"
+echo "[2/5] bc_avoid_* config variables"
 python3 - <<'EOF'
 text = open("src/engine/shared/config_variables_bestclient.h", encoding="utf-8").read()
 n = text.count("MACRO_CONFIG_INT(BcAvoid") + text.count("MACRO_CONFIG_STR(BcAvoid")
@@ -913,22 +1102,23 @@ assert n == 33, f"expected 33 bc_avoid_* cvars, found {n}"
 print("  ok:", n)
 EOF
 
-echo "[3/5] 本地化词条"
+echo "[3/5] localization entries"
 python3 - <<'EOF'
 keys = ["Avoid", "Assist mode", "Arm Avoid agent", "Check ticks", "NSIF on no safe input",
         "Basic", "Legit", "Blatant", "Input pipeline self-test",
-        "Tee", "Nearest", "Hazard / sensed", "Safe ahead", "Overrides", "Status HUD"]
+        "Tee", "Nearest", "Hazard / sensed", "Safe ahead", "Overrides", "Status HUD",
+        # stage 2 (Basic decision engine) reasons and log strings
+        "brake before hazard", "steer left before hazard", "steer right before hazard",
+        "player input safe", "still time before the hazard", "frozen, agent idle"]
 for path in ("data/BestClient/languages/simplified_chinese.txt",
              "data/BestClient/languages/russian.txt"):
     text = open(path, encoding="utf-8").read()
     for k in keys:
-        assert "
-%s
-== " % k in text, (path, k)
+        assert "\n%s\n== " % k in text, (path, k)
 print("  ok")
 EOF
 
-echo "[4/5] HUD 模块接线"
+echo "[4/5] HUD module wiring"
 python3 - <<'EOF'
 assert "MODULE_AVOID," in open("src/game/client/components/hud_layout.h", encoding="utf-8").read()
 t = open("src/game/client/components/hud_layout.cpp", encoding="utf-8").read()
@@ -938,18 +1128,40 @@ assert "MODULE_AVOID" in t and "m_Avoid.RenderPreview()" in t
 print("  ok")
 EOF
 
-echo "[5/5] 渲染顺序（前景地图层必须在 HUD 之前）"
+echo "[5/5] render order (map foreground layer must come before the HUD pass)"
 python3 - <<'EOF'
 t = open("src/game/client/gameclient.cpp", encoding="utf-8").read()
-fg = t.index("					      &m_MapLayersForeground,")
-hud = t.index("					      &m_Hud,")
-tas = t.index("					      &m_Tas, // bestclient")
-avo = t.index("					      &m_Avoid, // bestclient")
+fg = t.index("\t\t\t\t\t      &m_MapLayersForeground,")
+hud = t.index("\t\t\t\t\t      &m_Hud,")
+tas = t.index("\t\t\t\t\t      &m_Tas, // bestclient")
+avo = t.index("\t\t\t\t\t      &m_Avoid, // bestclient")
 assert fg < hud < tas < avo, "HUD components must render after the map layers"
 print("  ok: foreground < Hud < Tas < Avoid")
 EOF
 
-echo "全部通过"
+echo "[5b/5] decision engine wiring (Basic agent)"
+python3 - <<'EOF'
+t = open("src/game/client/components/bestclient/avoid.cpp", encoding="utf-8").read()
+# The Basic agent must exist and must still route every hazard decision through the stage 1
+# sensing helpers instead of a private copy of the probe rules.
+assert "int CAvoid::SimulateInput(" in t, "forward simulator is missing"
+assert "CAvoid::SInputPlan CAvoid::EvaluateBestPlan(" in t, "decision engine is missing"
+assert "IsRelevantHazard(ClassifyPoint(Sim.m_Pos))" in t, "simulator must reuse ClassifyPoint/IsRelevantHazard"
+assert "m_Tuning = Ctx.m_Core.m_Tuning" in t, "simulator must use the map tuning, not constants"
+# The sensing radius has to gate the engine, otherwise the setting only moves the HUD readout.
+assert "!Ctx.m_Threat.m_HasNearest" in t, "the sensing radius gate is missing from the decision engine"
+assert "m_Controls.m_aInputData" not in t.replace("`m_Controls.m_aInputData`", ""), "avoid must never write the raw key state buffer"
+assert "STAGE 2 IMPLEMENTATION SLOT" not in t, "the stage 2 slot should be filled in now"
+# Nothing but the direction may be rewritten in Basic mode.
+assert "Plan.m_Input.m_Hook" not in t and "Plan.m_Input.m_Jump" not in t, "Basic must only change m_Direction"
+print("  ok")
+EOF
+
+echo "[5c/5] simulator fidelity + cost benchmark + sensing radius tests"
+ninja -C build testrunner
+./build/testrunner --gtest_filter='CAvoidSimulatorTest.*:CAvoidSensingRadiusTest.*'
+
+echo "all checks passed"
 ```
 
 ---
@@ -959,7 +1171,7 @@ echo "全部通过"
 | 文档 | 覆盖范围 |
 | :--- | :--- |
 | [`docs/TAS_TECHNICAL_DOCUMENTATION.md`](TAS_TECHNICAL_DOCUMENTATION.md) | TAS 录制/回放、本地沙盒（FastPractice）、检查点、`.tas` 文件格式、DF/HDF |
-| 本文档 | TAS& 菜单下的 **避障 / Avoid** 子模块：感知、决策（待实现）、HUD、参数面 |
+| 本文档 | TAS& 菜单下的 **避障 / Avoid** 子模块：感知、决策（Basic 已实现，见第 6 章）、HUD、参数面 |
 
 两者共享同一套基础设施，交叉点只有三处，改动时注意不要互相破坏：
 
@@ -967,3 +1179,65 @@ echo "全部通过"
 2. `CAvoid::ActiveCore()` 会通过 `CFastPractice::ResolvePracticeRoles()` 读取本地沙盒角色，
    所以 TAS 录制期间避障的感知仍然正确。
 3. 两者都是 HUD 组件，**必须一起留在 HUD 渲染阶段**（见 [5.3 红线](#53-游戏内-hud-模块已接入-hud-编辑器与威胁可视化)）。
+
+---
+
+## 附录 F：交付分档与路线图
+
+避障模块按“**每个档位都能独立验收、下一档只做增量**”的方式推进。每档的产出一份任务书、
+一次提交、一个 tag，并且**必须给下一档留下可复用的地基**。
+
+### F.1 分档总表
+
+| 档位 | 模式 | 状态 | 任务书 | 核心增量 | 验收锚点 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **阶段一** | 全部 | ✅ v1.0.2 | 已归档 | 界面 + 33 cvar + 危险感知层 + 输入拦截管线 + HUD/可视化 + 本地化 | 界面验收清单（§8.1）、感知层验证（§8.2） |
+| **阶段二** | **Basic** | ✅ **v1.1.1** | [`AVOID_STAGE2_BASIC_PROMPT.md`](AVOID_STAGE2_BASIC_PROMPT.md) | **前向模拟器** + 方向键制动决策引擎（只改 `m_Direction`） | 走向危险被刹停、荡向危险被减速、窄通道不误触发 |
+| **阶段三** | **Legit** | ⬜ 下一档 | [`AVOID_STAGE3_LEGIT_PROMPT.md`](AVOID_STAGE3_LEGIT_PROMPT.md) | 钩子（含**提前松钩**）+ 跳跃 + **MCTS** + **其他玩家预测** | 勾向黑水墙前脱钩；`Quality`/`Randomness`/三个 Weight 真实生效 |
+| **阶段四** | **Blatant** | ⬜ | 由阶段三交付后编写 | Track Point、Safe Aim Tracking、Auto Drag、内置瞄准、NSIF 调优 | 极端 Gores 图上的生存率与瞄准辅助 |
+| **阶段五** | **Fentbot** | ⬜ | 由阶段四交付后编写 | Fent Ticks / Tweaker 系列（当前为灰色占位） | 与参考实现 Fent 行为对齐 |
+| **阶段六** | **Pilot** | ⬜ | 由阶段五交付后编写 | 种群 / 探索深度 / Top-K / 序列长度（当前为灰色占位） | 整段动作序列搜索 |
+
+### F.2 每档必须留下的地基（验收时会检查）
+
+| 档位 | 留给下一档的东西 |
+| :--- | :--- |
+| 阶段二 | `CAvoid::SimulateInput()`（**三个代理的公共模拟器**）、`bc_avoid_log` 逐决策日志、`CAvoidSimulatorTest` 保真度回归、`CAvoidSensingRadiusTest` 合成地图夹具 |
+| 阶段三 | 扩展后的候选生成器（方向/跳跃/钩子）、MCTS 打分器、玩家快照注入点、钩子释放的判据 |
+| 阶段四 | 瞄准/落点搜索、Track Point 记忆、Auto Drag 的队友选择 |
+
+> [!IMPORTANT]
+> **模拟器是所有档位的公共地基**。任何档位都不许复制一份自己的物理步进；
+> 需要新物理（例如角色互撞）就在 `SimulateInput()` 的克隆配置里加开关，
+> 并给它补一条 `CAvoidSimulatorTest` 的保真度用例。
+
+### F.3 参数接线检查表（本项目踩过的坑）
+
+**每一个 `bc_avoid_*` 参数都必须有“改了就一定有可观察差别”的证据**，否则就是没接线。
+v1.1.1 修过一次这类 bug：`bc_avoid_sensing_radius` 只喂给了感知层，
+决策引擎自己逐帧查图块时没有距离上限，导致滑条怎么调都在同一距离被刹住。
+
+| 参数 | 生效档位 | 怎么验证 |
+| :--- | :--- | :--- |
+| `bc_avoid_sensing_radius` | 二/三/四/五/六 | `CAvoidSensingRadiusTest.*`；游戏内：半径 6 → 2 应明显更晚减速（§8.3 第 8 行） |
+| `bc_avoid_direction_assist` | 二 | 关闭后代理不再改方向（Basic 只剩玩家自己的方向） |
+| `bc_avoid_check_ticks` | 二/三 | 前瞻窗口；调小 → 反应更晚，调大 → 更早但更贵 |
+| `bc_avoid_kick_in_ticks` | 二/三 | ≥ 26（> check_ticks）会导致代理永不介入，见 F.4 |
+| `bc_avoid_tile_*` | 二/三 | 关掉“死亡块”后走向黑水不再被拦（§8.3 第 7 行） |
+| `bc_avoid_hook_assist` / `m_HookWeight` | **三** | Legit：松不松钩的倾向；Basic 下无效（Basic 只改方向） |
+| `bc_avoid_player_prediction` | **三** | 队友从侧面撞你向危险时的反应 |
+| `bc_avoid_unfreeze_ticks` | **三** | 站在解冻块旁时的介入时机 |
+| `bc_avoid_quality` / `randomness` / 三个 Weight | **三** | `Quality` 1 vs 200 的 cost 与决策质量 |
+| `bc_avoid_track_point` / `safe_aim_tracking` / `auto_drag` / `aimbot*` | **四** | 阶段四任务书负责 |
+
+### F.4 已知的“配置陷阱”（写进用户文档，也写进下一档任务书）
+
+1. **`kick_in_ticks` ≥ `check_ticks` 会把干预窗口压到 0**：
+   当前规则是“玩家输入还能安全 ≥ `KickInTicks` 就不干预，否则才搜索”，
+   而搜索的前瞻只有 `CheckTicks` 帧。所以 `KickInTicks ≥ CheckTicks`（默认 20 < 26）时，
+   代理只会在“已经来不及完整挽救”的局面里出手 —— 表现为**介入明显偏晚**，
+   而且永远走 NSIF 兜底（红徽章）。
+   下一档建议加一条**配置提示**（UI 或 `avoid_status`），在 `KickInTicks >= CheckTicks` 时警告。
+2. **感知半径很大时改由 `check_ticks` 决定介入距离**（见 §6.7）：
+   半径超过约 8 图块后在平地上就感觉不出差别了，这是预期行为。
+3. **网络延迟**：参考实现要求 `cl_prediction_margin` 略高于 ping（如 50 ms ping 设 70）。

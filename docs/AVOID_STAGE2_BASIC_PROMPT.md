@@ -1,4 +1,4 @@
-# 交给下一个 AI 的提示词：实现「避障」模块的 Basic（基础）模式
+# 交给下一个 AI 的提示词：实现「避障」模块的 Basic（基础）模式  —— ✅ 已于 v1.1.1 交付
 
 > 用法：把下面 `====` 之间的整段内容原样发给下一个 AI（或直接说"读 `docs/AVOID_STAGE2_BASIC_PROMPT.md` 并执行"）。
 
@@ -135,9 +135,12 @@ ninja -C build DDNet
 
 * 这份任务书刻意**只做 Basic 模式的方向键制动**。原因是它同时覆盖了用户最初描述的三条验收里的前两条
   （"走向黑水被停住"和"荡向黑水被反向键减速"），而且它写出来的前向模拟器是后续所有代理的公共地基。
-* 完整阶段二（含钩子释放、MCTS、NSIF、Track Point）的任务书在
-  [`AVOID_TECHNICAL_DOCUMENTATION.md` 附录 A](AVOID_TECHNICAL_DOCUMENTATION.md#附录-a阶段二任务书可直接交给下一个-ai)，
-  本文件是它的**第一步切片**，两者不冲突：做完本任务后再交附录 A 即可。
+* 本任务书已于 v1.1.1 交付完毕，**不要再执行本文件**。
+* 下一档是 Legit：[`docs/AVOID_STAGE3_LEGIT_PROMPT.md`](AVOID_STAGE3_LEGIT_PROMPT.md)
+  （钩子释放 + 跳跃 + MCTS + 其他玩家预测）。
+* 最低层的完整任务书仍在 [`AVOID_TECHNICAL_DOCUMENTATION.md` 附录 A](AVOID_TECHNICAL_DOCUMENTATION.md#附录-a阶段二任务书可直接交给下一个-ai)，
+  但其中“第 1 步 前向模拟器”已完成，而且混入了阶段四的 Track Point / 内置瞄准，
+  请以附录 F 的分档表与各档任务书为准。
 * 如果下一个 AI 交回的结果不好，先检查这三件事：
   1. 模拟器是否用了地图 tuning（硬编码常量 = 必翻车）；
   2. 是否复用了 `ClassifyPoint()`（另写探测点 = 窄通道误触发）；
