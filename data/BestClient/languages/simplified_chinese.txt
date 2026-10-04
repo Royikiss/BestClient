@@ -2655,10 +2655,6 @@ engine pending (stage 2)
 == 决策引擎待实现 (阶段二)
 
 [BestClient]
-Threat
-== 威胁
-
-[BestClient]
 tiles
 == 图块
 
@@ -2679,22 +2675,6 @@ Plan
 == 决策
 
 [BestClient]
-planned
-== 未实现
-
-[BestClient]
-DISABLED
-== 已禁用
-
-[BestClient]
-STANDBY
-== 待命
-
-[BestClient]
-Overrides
-== 接管
-
-[BestClient]
 Quick toggle
 == 快捷开关
 
@@ -2703,80 +2683,8 @@ Gores bot agent
 == 避障代理
 
 [BestClient]
-Subtle assistance that keeps your movement natural; may still fail on the hardest parts.
-== 细腻的辅助，尽量保持你的操作手感；在极难关卡仍可能失败。
-
-[BestClient]
-Safety above all: also steers and uses the hook, meant for extreme Gores maps.
-== 安全优先：会接管方向键并使用钩子，面向极高难度 Gores 地图。
-
-[BestClient]
-Solves whole parts asynchronously with pathfinding and a genetic search. Planned.
-== 用寻路与遗传搜索异步解算整段路线。尚未实现。
-
-[BestClient]
-Navigates the map on its own or follows a target. Planned.
-== 自主导航地图或跟随目标。尚未实现。
-
-[BestClient]
-Direction keys only, no tuning. The simple default for plain freeze rooms.
-== 仅接管左右方向键，没有可调参数。适合简单的冻结房。
-
-[BestClient]
-Disarm Avoid agent
-== 解除避障代理
-
-[BestClient]
-Arm Avoid agent
-== 启用避障代理
-
-[BestClient]
-Armed: the agent inspects every tick and only takes over when your own input would end in a hazard.
-== 已启用：代理逐帧检查，只有在你原本的操作会撞上危险时才会接管。
-
-[BestClient]
-Disarmed: the sensor keeps running so you can watch threats, but your input is never changed.
-== 已解除：感知仍在运行，方便你观察威胁，但绝不会修改你的操作。
-
-[BestClient]
-Live status
-== 实时状态
-
-[BestClient]
 Tee
 == 角色
-
-[BestClient]
-no hazard in range
-== 范围内无危险
-
-[BestClient]
-Nearest
-== 最近危险
-
-[BestClient]
-Hazard / sensed
-== 危险 / 已探测
-
-[BestClient]
-Safe ahead
-== 安全前瞻
-
-[BestClient]
-The decision engine is not implemented yet - see the delivery document.
-== 决策引擎尚未实现，详见交付文档。
-
-[BestClient]
-Enable Avoid module
-== 启用避障模块
-
-[BestClient]
-Status HUD
-== 状态 HUD
-
-[BestClient]
-Threat overlay
-== 威胁可视化
 
 [BestClient]
 Assist
@@ -2823,22 +2731,6 @@ Internal aim
 == 内置瞄准
 
 [BestClient]
-Enable aim assist
-== 启用瞄准辅助
-
-[BestClient]
-Auto aim
-== 自动瞄准
-
-[BestClient]
-Aim assist
-== 瞄准辅助
-
-[BestClient]
-Scan segments
-== 扫描分段
-
-[BestClient]
 Field of view
 == 视野角
 
@@ -2853,10 +2745,6 @@ Direction and hook assistance decide what the agent may change. Auto aim scans t
 [BestClient]
 Search
 == 搜索
-
-[BestClient]
-Priority weights
-== 优先级权重
 
 [BestClient]
 Check ticks
@@ -2903,16 +2791,8 @@ Hazard tiles
 == 危险图块
 
 [BestClient]
-Sensing
-== 感知
-
-[BestClient]
 Death tiles
 == 死亡块
-
-[BestClient]
-Freeze tiles
-== 冻结块
 
 [BestClient]
 Unfreeze tiles
@@ -2923,20 +2803,8 @@ Teleport tiles
 == 传送块
 
 [BestClient]
-Unfreeze lookahead
-== 解冻前瞻
-
-[BestClient]
 Sensing radius
 == 感知半径
-
-[BestClient]
-Predict other players
-== 预测其他玩家
-
-[BestClient]
-Black water and freeze are what the agent protects you from. Unfreeze and teleport tiles are optional: turning them on keeps you away from helpers you may actually want.
-== 代理主要防的是黑水与冻结。解冻块与传送块是可选项：开启后会连这些有用的机关也一起躲开。
 
 [BestClient]
 The sensing radius only affects what the agent can see ahead of time and the threat overlay. It costs almost nothing.
@@ -2945,10 +2813,6 @@ The sensing radius only affects what the agent can see ahead of time and the thr
 [BestClient]
 Safety
 == 安全策略
-
-[BestClient]
-NSIF on no safe input
-== 无安全解时沿用 (NSIF)
 
 [BestClient]
 AFK protection
@@ -3019,10 +2883,6 @@ Pilot needs its own navigation stage; only the menu is reserved for now.
 == Pilot 需要独立的导航阶段，目前仅预留界面。
 
 [BestClient]
-Print status
-== 打印状态
-
-[BestClient]
 Reset counters
 == 重置计数
 
@@ -3030,98 +2890,17 @@ Reset counters
 Avoid
 == 避障
 
-
-[BestClient]
-Assist mode
-== 辅助模式
-
-[BestClient]
-Input pipeline self-test
-== 输入管线自检
-
-[BestClient]
-Basic agent
-== Basic 代理
-
-[BestClient]
-Basic takes over the left and right keys only, and it has no options of its own.
-== Basic 只接管左右方向键，没有自己的可调参数。
-
-[BestClient]
-It is the safe default for plain freeze rooms. Pick Legit for fine tuning or Blatant for maximum safety.
-== 适合简单的冻结房。需要细致调参请选“拟真”，追求极致安全请选“激进”。
-
-[BestClient]
-Behaviour
-== 行为
-
-[BestClient]
-Legit only nudges your movement. Turning assistance off keeps that part of your input exactly as you pressed it.
-== 拟真只会轻推你的移动。关闭对应辅助后，那部分输入将完全保持你按下的原样。
-
 [BestClient]
 Aim tracking
 == 瞄准跟踪
-
-[BestClient]
-Dragging
-== 拖拽
-
-[BestClient]
-Track point keeps aiming at the last direction that was hookable to solid ground, which is what makes Blatant recover on extreme maps.
-== 跟踪瞄准点会持续对准上一次能勾住实地的方向，这是激进模式能在极难关卡自救的关键。
-
-[BestClient]
-Check ticks is how far ahead the agent must keep you safe. Quality and Randomness trade CPU time for better plans.
-== 检查帧数是代理必须保证你安全的提前量；计算质量与随机程度用 CPU 时间换取更好的方案。
-
-[BestClient]
-Lower Quality keeps the frame rate stable when many players are around.
-== 周围玩家较多时，降低计算质量可以保持帧率稳定。
-
-[BestClient]
-Kick in ticks is how late the agent may still stay out of your way. Keep it clearly below the lookahead, for example 20 against 26.
-== 介入阈值是代理最多能拖到多晚才出手，应明显小于检查帧数，例如 26 帧前瞻配 20 帧阈值。
-
-[BestClient]
-Direction and Hook priority decide how much the agent respects what you were trying to do. Life priority decides how much it prefers simply surviving.
-== 方向与钩子优先决定代理有多尊重你的操作意图；生存优先决定它有多偏向“先活下来”。
-
-[BestClient]
-Raise Life priority if the agent feels too timid, lower it if it fights your input too often.
-== 觉得代理太畏手畏脚就调高生存优先；觉得它总跟你抢操作就调低。
-
-[BestClient]
-Auto aim scans the whole field of view for the direction that stays safe the longest. Aim assist prefers the safe direction closest to your cursor.
-== 自动瞄准会在整个视野角内扫描，选择能安全坚持最久的方向；瞄准辅助则优先选择离你鼠标最近的安全方向。
 
 [BestClient]
 Recovery
 == 自救策略
 
 [BestClient]
-NSIF kicks in when nothing is fully safe: the agent replays the first step of the safest plan it knows instead of giving up.
-== 当不存在完全安全的方案时，NSIF 会沿用已知最安全方案的第一步，而不是直接放弃。
-
-[BestClient]
 Light tiles
 == 浅层解冻
-
-[BestClient]
-Fentbot may cross freeze tiles when an unfreeze tile is close enough, which is how it solves light freeze segments.
-== 当附近存在解冻块时，Fentbot 允许穿越冻结块，这是它处理“浅冻结”路段的方式。
-
-[BestClient]
-Pathfinding
-== 寻路
-
-[BestClient]
-Quality preset
-== 质量预设
-
-[BestClient]
-Fentbot runs its own asynchronous search, so it needs a calculation panel of its own. Only the menu is reserved for now.
-== Fentbot 运行独立的异步搜索，因此需要自己的计算参数面板。目前仅预留界面。
 
 [BestClient]
 Navigation mode
@@ -3140,32 +2919,12 @@ Follow player
 == 跟随玩家
 
 [BestClient]
-Pilot navigates the map on its own, so its modes are chosen here.
-== Pilot 会自行导航地图，因此它的模式在这里选择。
-
-[BestClient]
 Search budget
 == 搜索预算
 
 [BestClient]
-Pilot searches whole movement sequences instead of single inputs, which is why its budget looks different from Blatant.
-== Pilot 搜索的是整段动作序列而不是单帧输入，所以它的预算参数与激进模式不同。
-
-[BestClient]
 Render path
 == 渲染路径
-
-[BestClient]
-Render pathfinding
-== 渲染寻路区域
-
-[BestClient]
-Spectate scan
-== 旁观扫描
-
-[BestClient]
-Shared switches for these overlays live under Module and on the Tiles panel. The path renderers arrive with the agent itself.
-== 这些叠加层的通用开关位于“模块”与“图块”面板；路径绘制会随代理算法一同到来。
 
 [BestClient]
 Basic
@@ -3186,10 +2945,6 @@ Fentbot
 [BestClient]
 Pilot
 == Pilot
-
-[BestClient]
-debug override (input pipeline self-test)
-== 调试接管 (输入管线自检)
 
 [BestClient]
 no map data
@@ -3316,18 +3071,6 @@ agent not implemented yet
 == 该代理尚未实现
 
 [BestClient]
-warning: kick in ticks is not below check ticks, the agent will react late
-== 警告：介入阈值不低于前瞻帧数，代理会反应过晚
-
-[BestClient]
-Radius (half tiles)
-== 半径（半格）
-
-[BestClient]
-The sensing radius is how far ahead the agent may notice a hazard, in half tiles (12 = 6 tiles). Lower it to react later, raise it to react earlier; the scan itself costs almost nothing.
-== 感知半径是代理能提前发现危险的距离，单位是半格（12 = 6 格）。调小 → 更晚介入，调大 → 更早介入；这项扫描本身几乎不耗性能。
-
-[BestClient]
 no safer plan (jump is a last resort)
 == 没有更安全的方案（跳跃留作最后手段）
 
@@ -3442,3 +3185,296 @@ aim at the safest hookable spot, steer right
 [BestClient]
 release hook and aim clear of the hazard
 == 松开钩子并把准星移开危险
+
+[BestClient]
+Avoid: counters reset
+== 避障：计数已重置
+
+[BestClient]
+OFF
+== 关闭
+
+[BestClient]
+WATCH
+== 监视
+
+[BestClient]
+ASSIST
+== 接管
+
+[BestClient]
+NSIF
+== NSIF
+
+[BestClient]
+AFK
+== 挂机
+
+[BestClient]
+Avoid: AFK protection disabled the bot
+== 避障：挂机保护已自动关闭机器人
+
+[BestClient]
+Plan:
+== 决策：
+
+[BestClient]
+Safe:
+== 安全：
+
+[BestClient]
+Cost:
+== 耗时：
+
+[BestClient]
+Override:
+== 接管：
+
+[BestClient]
+Avoid: enabled
+== 避障：已启用
+
+[BestClient]
+Avoid: disabled
+== 避障：已禁用
+
+[BestClient]
+cost
+== 耗时
+
+[BestClient]
+took over
+== 接管
+
+[BestClient]
+Disable
+== 禁用
+
+[BestClient]
+Gores bot
+== 避障机器人
+
+[BestClient]
+Enable Gores bot
+== 启用避障机器人
+
+[BestClient]
+Keeps your movement natural: it weighs staying on course against surviving, and can still fail on the hardest parts.
+== 尽量保持你的操作手感：在“保持原有路线”与“活下去”之间权衡，在最难的地段仍可能失败。
+
+[BestClient]
+Safety first: also steers and uses the hook, and recovers on extreme Gores maps.
+== 安全优先：同时接管方向与钩索，在极端 Gore 地图上也能自救。
+
+[BestClient]
+Searches whole map segments with a flow field and a genetic input tweaker. CPU heavy.
+== 用流场与遗传式输入微调搜索整段地图，CPU 占用较高。
+
+[BestClient]
+Drives the tee itself: autonomous, towards your cursor, or towards another player.
+== 由机器人自己驾驶 Tee：自主前进、跟随准星或跟随其他玩家。
+
+[BestClient]
+Only takes over the left and right keys, six ticks ahead. No options of its own.
+== 只接管左右方向键，前瞻 6 帧，自身没有可调参数。
+
+[BestClient]
+All bots
+== 所有机器人共用
+
+[BestClient]
+Player prediction
+== 预测其他玩家
+
+[BestClient]
+Player prediction makes every bot simulate the other tees as well; AFK protection switches the bot off after the configured idle time.
+== 开启后机器人会一并推演其他 Tee 的移动；挂机保护会在设定时间内无任何操作后自动关闭机器人。
+
+[BestClient]
+Render track point
+== 显示锁定点
+
+[BestClient]
+Render aimbot target
+== 显示自瞄目标
+
+[BestClient]
+Basic only takes over the left and right keys. It always looks six ticks ahead, drops the direction that runs into a freeze, a death tile or another tee, and leaves jump, hook and crosshair exactly as you pressed them.
+== 基础模式只接管左右方向键。它固定前瞻 6 帧，丢弃会撞上冻结、死亡图块或其他 Tee 的方向；跳跃、钩索与准星完全保留你的操作。
+
+[BestClient]
+It is the cheapest bot and the safe default for plain freeze rooms. Pick Legit for fine tuning, Blatant for maximum safety, Fentbot for long map segments or Pilot to let the tee drive itself.
+== 它开销最低，是普通冻结房间的稳妥默认值。需要细调选拟真，追求最高安全性选激进，长距离路段选 Fentbot，想让 Tee 自己跑就选 Pilot。
+
+[BestClient]
+Check ticks is how far ahead every simulated move has to stay safe. Turning an assistance off keeps that part of your input exactly as you pressed it.
+== 检查帧数指每个模拟动作必须保持安全的帧数。关闭某项接管后，这部分输入将完全保持你的原始操作。
+
+[BestClient]
+Priority
+== 优先级
+
+[BestClient]
+Quality is the number of simulated moves per decision and Randomness is how much the search explores. The three priorities decide how strongly the bot sticks to your direction, your hook state and to simply surviving.
+== 计算质量是每次决策模拟的动作数量，随机程度决定搜索的探索幅度。三个优先级分别决定机器人多看重你的方向、你的钩索状态，以及单纯活得更久。
+
+[BestClient]
+Unfreeze ticks
+== 解冻帧数
+
+[BestClient]
+Freeze tiles are always avoided. Death, teleport and unfreeze tiles are optional: switching them on also keeps you away from helpers you may actually want.
+== 冻结图块始终规避。死亡、传送与解冻图块是可选项：打开后会连你可能需要的辅助图块一起躲开。
+
+[BestClient]
+NSIF (no safe input found)
+== NSIF（找不到安全输入）
+
+[BestClient]
+NSIF kicks in when no input survives the whole lookahead: instead of giving up, the bot replays the first step of the last input sequence that was fully safe.
+== 当没有任何输入能撑过整个前瞻窗口时，NSIF 不会放弃，而是回放上一段完全安全输入序列的第一步。
+
+[BestClient]
+Check ticks is how long a simulated move must survive, kick in ticks is how long your own input must survive before the bot stays out of the way. Track point keeps aiming where you last could hook onto a tile; safe aim tracking only holds that aim while it stays safe.
+== 检查帧数是模拟动作必须存活的帧数，介入帧数是你的原始操作需要撑过多少帧机器人才会让路。锁定点会持续瞄准你上一次能勾住图块的方向；安全锁定只在整段前瞻都安全时才保持该瞄准。
+
+[BestClient]
+Freeze tiles are always avoided. Turning unfreeze tiles on is only useful on maps where being unfrozen is more dangerous than staying frozen.
+== 冻结图块始终规避。只有当地图上被解冻比保持冻结更危险时，打开解冻图块才有意义。
+
+[BestClient]
+Enable internal aimbot
+== 启用内置自瞄
+
+[BestClient]
+Segments
+== 扫描分段
+
+[BestClient]
+Auto aim (longest survival)
+== 自动瞄准（存活最久）
+
+[BestClient]
+Aim assist (closest safe aim)
+== 瞄准辅助（最接近的安全方向）
+
+[BestClient]
+Segments is how many directions are scanned inside the field of view. Auto aim takes the direction that survives longest, aim assist the safe direction closest to your cursor; both only apply while the internal aimbot is enabled.
+== 扫描分段是视野内扫描的方向数量。自动瞄准选择存活最久的方向，瞄准辅助选择离你准星最近的安全方向；两者都只在启用内置自瞄时生效。
+
+[BestClient]
+Cross light freeze tiles
+== 穿越浅冻图块
+
+[BestClient]
+Unfreeze radius
+== 解冻半径
+
+[BestClient]
+A freeze tile becomes crossable when an unfreeze tile is inside the radius, which is what lets the bot solve light freeze segments.
+== 当半径内存在解冻图块时，冻结图块会被视为可通过，这正是机器人能处理浅冻路段的原因。
+
+[BestClient]
+Advanced settings
+== 高级设置
+
+[BestClient]
+Quality setting
+== 质量档位
+
+[BestClient]
+Low
+== 低
+
+[BestClient]
+Mid
+== 中
+
+[BestClient]
+Max
+== 高
+
+[BestClient]
+Quality setting picks the presets from the reference client: Low 88, Mid 160 and Max 1000 candidate inputs with 88, 160 and 300 optimisation generations. All of them plan 10000 ticks ahead.
+== 质量档位取自参考客户端的预设：低档 88、中档 160、高档 1000 个候选输入，对应 88、160、300 代优化；三者都前瞻 10000 帧。
+
+[BestClient]
+Advanced
+== 高级
+
+[BestClient]
+Fent ticks is how far the search plans ahead, Tweaker inputs how many candidate input sequences each generation has, Tweaker ticks how many ticks one candidate covers and Tweaker dosage how many generations are run. Higher values solve more, but take longer to converge.
+== Fent 帧数决定搜索的前瞻长度，微调输入是每一代的候选输入序列数量，微调帧数是一个候选覆盖的帧数，微调剂量是运行的代数。数值越高解得越远，但收敛越慢。
+
+[BestClient]
+The bot drives the tee towards your mouse cursor and still avoids every hazard on the way.
+== 机器人会驾驶 Tee 朝你的鼠标准星前进，同时一路规避所有危险。
+
+[BestClient]
+The bot drives the tee towards the closest other player, which is what you want for following a run.
+== 机器人会驾驶 Tee 朝最近的其他玩家前进，适合跟跑别人的路线。
+
+[BestClient]
+The bot drives the tee on its own, following the flow field towards the finish or the next unfreeze tile of the map.
+== 机器人会自己驾驶 Tee，沿流场朝终点或地图上的下一个解冻图块前进。
+
+[BestClient]
+Population size is how many input sequences are tested, exploration depth how many ticks each of them is simulated for, Top-K how many of the best survive into the next generation and sequence length how many ticks are driven before the plan is replaced by a better one.
+== 种群规模是测试的输入序列数量，探索深度是每条序列模拟的帧数，Top-K 是进入下一代的精英数量，序列长度是执行多少帧后换上更好的方案。
+
+[BestClient]
+unknown
+== 未知
+
+[BestClient]
+Practice HUD modules
+== 练习用 HUD 模块
+
+[BestClient]
+Open HUD editor
+== 打开 HUD 编辑器
+
+[BestClient]
+The TAS status overlay, the Avoid status panel and the TAS trajectory are regular HUD modules: enable, move and scale them in the HUD editor.
+== TAS 状态浮层、避障状态面板与 TAS 轨迹都是普通 HUD 模块：在 HUD 编辑器里启用、移动和缩放。
+
+[BestClient]
+HUD Module
+== HUD 模块
+
+[BestClient]
+grid
+== 网格
+
+[BestClient]
+ready
+== 就绪
+
+[BestClient]
+building
+== 构建中
+
+[BestClient]
+Status HUD
+== 状态面板
+
+[BestClient]
+The search stops after 8 ms per tick to keep the frame rate stable, so very high Quality values stop paying off on maps with many entities.
+== 为保持帧率稳定，搜索每帧最多运行 8 毫秒，因此在地图实体较多时，把计算质量调得过高不会再带来收益。
+
+[BestClient]
+Check ticks is how long a simulated move must survive, kick in ticks is how long your own input must survive before the bot stays out of the way.
+== 检查帧数是模拟动作必须存活的帧数，介入帧数是你的原始操作需要撑过多少帧机器人才会让路。
+
+[BestClient]
+Track point keeps aiming where you last could hook onto a tile, and safe aim tracking only holds that aim while it stays safe.
+== 锁定点会持续瞄准你上一次能勾住图块的方向；安全锁定只在整段前瞻都安全时才保持该瞄准。
+
+[BestClient]
+Track point, safe aim tracking and auto drag need the internal aimbot on the Aimbot tab; without it they change nothing.
+== 锁定点、安全锁定与自动拉扯都依赖“自瞄”页里的内置自瞄开关；不开自瞄时它们不会有任何效果。
+
+[BestClient]
+safe
+== 安全
+

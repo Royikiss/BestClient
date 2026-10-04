@@ -551,7 +551,7 @@ void CMenus::RenderSettingsTasHelpers(CUIRect MainView)
 		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 	}
 
-	// Right: Upcoming Auxiliary Modules
+	// Right: HUD module editor shortcut, so the auxiliary tab leads somewhere useful.
 	{
 		CUIRect Box2;
 		RightColumn.HSplitTop(180.0f, &Box2, &RightColumn);
@@ -560,14 +560,26 @@ void CMenus::RenderSettingsTasHelpers(CUIRect MainView)
 		CUIRect Content;
 		Box2.Margin(8.0f, &Content);
 
-		CUIRect Title, Desc;
+		CUIRect Title, RowBtn, Desc;
 		Content.HSplitTop(22.0f, &Title, &Content);
-		Ui()->DoLabel(&Title, BcLocalize("Auxiliary Modules"), 13.0f, TEXTALIGN_ML);
+		Ui()->DoLabel(&Title, BcLocalize("Practice HUD modules"), 13.0f, TEXTALIGN_ML);
 
-		Content.HSplitTop(10.0f, nullptr, &Content);
-		Content.HSplitTop(60.0f, &Desc, &Content);
+		Content.HSplitTop(6.0f, nullptr, &Content);
+		Content.HSplitTop(26.0f, &RowBtn, &Content);
+
+		static CButtonContainer s_HudEditorBtn;
+		if(DoButton_Menu(&s_HudEditorBtn, BcLocalize("Open HUD editor"), 0, &RowBtn))
+		{
+			if(GameClient()->m_HudEditor.IsActive())
+				GameClient()->m_HudEditor.Deactivate();
+			else
+				GameClient()->m_HudEditor.Activate();
+		}
+
+		Content.HSplitTop(8.0f, nullptr, &Content);
+		Content.HSplitTop(70.0f, &Desc, &Content);
 		TextRender()->TextColor(0.75f, 0.85f, 0.95f, 1.0f);
-		Ui()->DoLabel(&Desc, BcLocalize("This section is reserved for upcoming auxiliary modules and practice assistants. More modules will be integrated here."), 12.0f, TEXTALIGN_ML);
+		Ui()->DoLabel(&Desc, BcLocalize("The TAS status overlay, the Avoid status panel and the TAS trajectory are regular HUD modules: enable, move and scale them in the HUD editor."), 11.0f, TEXTALIGN_ML);
 		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 	}
 }

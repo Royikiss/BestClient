@@ -2655,10 +2655,6 @@ engine pending (stage 2)
 == движок решений ещё не реализован (этап 2)
 
 [BestClient]
-Threat
-== Угроза
-
-[BestClient]
 tiles
 == тайлов
 
@@ -2679,22 +2675,6 @@ Plan
 == План
 
 [BestClient]
-planned
-== план
-
-[BestClient]
-DISABLED
-== ВЫКЛ
-
-[BestClient]
-STANDBY
-== ОЖИДАНИЕ
-
-[BestClient]
-Overrides
-== Перехваты
-
-[BestClient]
 Quick toggle
 == Быстрое вкл/выкл
 
@@ -2703,80 +2683,8 @@ Gores bot agent
 == Агент обхода
 
 [BestClient]
-Subtle assistance that keeps your movement natural; may still fail on the hardest parts.
-== Мягкая помощь, сохраняющая естественное движение; на сложных участках может не справиться.
-
-[BestClient]
-Safety above all: also steers and uses the hook, meant for extreme Gores maps.
-== Безопасность прежде всего: управляет движением и крюком, рассчитан на экстремальные Gores-карты.
-
-[BestClient]
-Solves whole parts asynchronously with pathfinding and a genetic search. Planned.
-== Асинхронно решает целые участки поиском пути и генетическим алгоритмом. Пока не реализовано.
-
-[BestClient]
-Navigates the map on its own or follows a target. Planned.
-== Самостоятельно проходит карту или следует за целью. Пока не реализовано.
-
-[BestClient]
-Direction keys only, no tuning. The simple default for plain freeze rooms.
-== Только клавиши направления, без настроек. Простой вариант для обычных комнат с заморозкой.
-
-[BestClient]
-Disarm Avoid agent
-== Отключить агента обхода
-
-[BestClient]
-Arm Avoid agent
-== Включить агента обхода
-
-[BestClient]
-Armed: the agent inspects every tick and only takes over when your own input would end in a hazard.
-== Включён: агент проверяет каждый тик и перехватывает управление только тогда, когда ваш ввод ведёт к опасности.
-
-[BestClient]
-Disarmed: the sensor keeps running so you can watch threats, but your input is never changed.
-== Отключён: сенсор продолжает работать, показывая угрозы, но ваш ввод не изменяется.
-
-[BestClient]
-Live status
-== Текущее состояние
-
-[BestClient]
 Tee
 == Ти
-
-[BestClient]
-no hazard in range
-== в радиусе нет опасности
-
-[BestClient]
-Nearest
-== Ближайшая
-
-[BestClient]
-Hazard / sensed
-== Опасных / проверено
-
-[BestClient]
-Safe ahead
-== Запас безопасности
-
-[BestClient]
-The decision engine is not implemented yet - see the delivery document.
-== Движок решений ещё не реализован — см. документ поставки.
-
-[BestClient]
-Enable Avoid module
-== Включить модуль обхода
-
-[BestClient]
-Status HUD
-== HUD состояния
-
-[BestClient]
-Threat overlay
-== Оверлей угроз
 
 [BestClient]
 Assist
@@ -2823,22 +2731,6 @@ Internal aim
 == Встроенный прицел
 
 [BestClient]
-Enable aim assist
-== Включить помощь прицела
-
-[BestClient]
-Auto aim
-== Автоприцел
-
-[BestClient]
-Aim assist
-== Помощь прицела
-
-[BestClient]
-Scan segments
-== Сегменты сканирования
-
-[BestClient]
 Field of view
 == Угол обзора
 
@@ -2853,10 +2745,6 @@ Direction and hook assistance decide what the agent may change. Auto aim scans t
 [BestClient]
 Search
 == Поиск
-
-[BestClient]
-Priority weights
-== Веса приоритетов
 
 [BestClient]
 Check ticks
@@ -2903,16 +2791,8 @@ Hazard tiles
 == Опасные тайлы
 
 [BestClient]
-Sensing
-== Сенсор
-
-[BestClient]
 Death tiles
 == Тайлы смерти
-
-[BestClient]
-Freeze tiles
-== Тайлы заморозки
 
 [BestClient]
 Unfreeze tiles
@@ -2923,20 +2803,8 @@ Teleport tiles
 == Тайлы телепорта
 
 [BestClient]
-Unfreeze lookahead
-== Прогноз разморозки
-
-[BestClient]
 Sensing radius
 == Радиус сенсора
-
-[BestClient]
-Predict other players
-== Предсказывать игроков
-
-[BestClient]
-Black water and freeze are what the agent protects you from. Unfreeze and teleport tiles are optional: turning them on keeps you away from helpers you may actually want.
-== Агент защищает от чёрной воды и заморозки. Разморозка и телепорты — на выбор: включив их, вы будете держаться и от полезных механизмов.
 
 [BestClient]
 The sensing radius only affects what the agent can see ahead of time and the threat overlay. It costs almost nothing.
@@ -2945,10 +2813,6 @@ The sensing radius only affects what the agent can see ahead of time and the thr
 [BestClient]
 Safety
 == Безопасность
-
-[BestClient]
-NSIF on no safe input
-== NSIF при отсутствии решения
 
 [BestClient]
 AFK protection
@@ -3019,10 +2883,6 @@ Pilot needs its own navigation stage; only the menu is reserved for now.
 == Pilot требует отдельного этапа навигации; пока зарезервировано только меню.
 
 [BestClient]
-Print status
-== Вывести статус
-
-[BestClient]
 Reset counters
 == Сбросить счётчики
 
@@ -3030,98 +2890,17 @@ Reset counters
 Avoid
 == Обход
 
-
-[BestClient]
-Assist mode
-== Режим помощи
-
-[BestClient]
-Input pipeline self-test
-== Самотест ввода
-
-[BestClient]
-Basic agent
-== Агент Basic
-
-[BestClient]
-Basic takes over the left and right keys only, and it has no options of its own.
-== Basic перехватывает только клавиши влево и вправо и не имеет собственных настроек.
-
-[BestClient]
-It is the safe default for plain freeze rooms. Pick Legit for fine tuning or Blatant for maximum safety.
-== Безопасный вариант для обычных комнат с заморозкой. Для тонкой настройки выберите Legit, для максимальной безопасности — Blatant.
-
-[BestClient]
-Behaviour
-== Поведение
-
-[BestClient]
-Legit only nudges your movement. Turning assistance off keeps that part of your input exactly as you pressed it.
-== Legit лишь слегка поправляет движение. Если отключить помощь, эта часть ввода останется ровно такой, как вы нажали.
-
 [BestClient]
 Aim tracking
 == Ведение прицела
-
-[BestClient]
-Dragging
-== Подтягивание
-
-[BestClient]
-Track point keeps aiming at the last direction that was hookable to solid ground, which is what makes Blatant recover on extreme maps.
-== Точка прицела удерживает направление, за которое можно было зацепиться, — именно это позволяет Blatant выбираться на экстремальных картах.
-
-[BestClient]
-Check ticks is how far ahead the agent must keep you safe. Quality and Randomness trade CPU time for better plans.
-== Тиков проверки — насколько вперёд агент обязан держать вас в безопасности. Качество и случайность обменивают время CPU на лучшие планы.
-
-[BestClient]
-Lower Quality keeps the frame rate stable when many players are around.
-== Снижение качества сохранит частоту кадров, когда рядом много игроков.
-
-[BestClient]
-Kick in ticks is how late the agent may still stay out of your way. Keep it clearly below the lookahead, for example 20 against 26.
-== Порог вмешательства — насколько поздно агент может не мешать. Держите его заметно ниже прогноза, например 20 при 26.
-
-[BestClient]
-Direction and Hook priority decide how much the agent respects what you were trying to do. Life priority decides how much it prefers simply surviving.
-== Приоритеты направления и крюка определяют, насколько агент уважает ваши намерения. Приоритет выживания — насколько он предпочитает просто выжить.
-
-[BestClient]
-Raise Life priority if the agent feels too timid, lower it if it fights your input too often.
-== Повышайте приоритет выживания, если агент слишком робок, и понижайте, если он слишком часто спорит с вашим вводом.
-
-[BestClient]
-Auto aim scans the whole field of view for the direction that stays safe the longest. Aim assist prefers the safe direction closest to your cursor.
-== Автоприцел сканирует весь угол обзора и выбирает направление, безопасное дольше всего. Помощь прицела предпочитает безопасное направление ближе к курсору.
 
 [BestClient]
 Recovery
 == Восстановление
 
 [BestClient]
-NSIF kicks in when nothing is fully safe: the agent replays the first step of the safest plan it knows instead of giving up.
-== NSIF включается, когда полностью безопасного варианта нет: агент повторяет первый шаг самого безопасного известного плана вместо того, чтобы сдаться.
-
-[BestClient]
 Light tiles
 == Лёгкая заморозка
-
-[BestClient]
-Fentbot may cross freeze tiles when an unfreeze tile is close enough, which is how it solves light freeze segments.
-== Fentbot может пройти сквозь тайлы заморозки, если рядом есть разморозка, — так он решает участки лёгкой заморозки.
-
-[BestClient]
-Pathfinding
-== Поиск пути
-
-[BestClient]
-Quality preset
-== Пресет качества
-
-[BestClient]
-Fentbot runs its own asynchronous search, so it needs a calculation panel of its own. Only the menu is reserved for now.
-== Fentbot выполняет собственный асинхронный поиск, поэтому ему нужна отдельная панель расчёта. Пока зарезервировано только меню.
 
 [BestClient]
 Navigation mode
@@ -3140,32 +2919,12 @@ Follow player
 == За игроком
 
 [BestClient]
-Pilot navigates the map on its own, so its modes are chosen here.
-== Pilot сам проходит карту, поэтому его режимы выбираются здесь.
-
-[BestClient]
 Search budget
 == Бюджет поиска
 
 [BestClient]
-Pilot searches whole movement sequences instead of single inputs, which is why its budget looks different from Blatant.
-== Pilot ищет целые последовательности движений, а не отдельные входы, поэтому его бюджет отличается от Blatant.
-
-[BestClient]
 Render path
 == Показ пути
-
-[BestClient]
-Render pathfinding
-== Показ зоны поиска
-
-[BestClient]
-Spectate scan
-== Сканирование в наблюдателях
-
-[BestClient]
-Shared switches for these overlays live under Module and on the Tiles panel. The path renderers arrive with the agent itself.
-== Общие переключатели этих оверлеев находятся в панели «Тайлы». Отрисовка пути появится вместе с самим агентом.
 
 [BestClient]
 Basic
@@ -3186,10 +2945,6 @@ Fentbot
 [BestClient]
 Pilot
 == Pilot
-
-[BestClient]
-debug override (input pipeline self-test)
-== отладка: перехват (самотест ввода)
 
 [BestClient]
 no map data
@@ -3316,18 +3071,6 @@ agent not implemented yet
 == этот агент ещё не реализован
 
 [BestClient]
-warning: kick in ticks is not below check ticks, the agent will react late
-== внимание: kick in ticks не меньше check ticks, агент будет реагировать поздно
-
-[BestClient]
-Radius (half tiles)
-== Радиус (полутайлы)
-
-[BestClient]
-The sensing radius is how far ahead the agent may notice a hazard, in half tiles (12 = 6 tiles). Lower it to react later, raise it to react earlier; the scan itself costs almost nothing.
-== Радиус обзора — это то, насколько заранее агент замечает опасность, в полутайлах (12 = 6 тайлов). Меньше — позже реакция, больше — раньше; сам скан почти ничего не стоит.
-
-[BestClient]
 no safer plan (jump is a last resort)
 == нет более безопасного плана (прыжок — крайняя мера)
 
@@ -3442,3 +3185,296 @@ aim at the safest hookable spot, steer right
 [BestClient]
 release hook and aim clear of the hazard
 == отпустить крюк и увести прицел от опасности
+
+[BestClient]
+Avoid: counters reset
+== Avoid: счётчики сброшены
+
+[BestClient]
+OFF
+== Выкл
+
+[BestClient]
+WATCH
+== Наблюдение
+
+[BestClient]
+ASSIST
+== Помощь
+
+[BestClient]
+NSIF
+== NSIF
+
+[BestClient]
+AFK
+== AFK
+
+[BestClient]
+Avoid: AFK protection disabled the bot
+== Avoid: защита от AFK отключила бота
+
+[BestClient]
+Plan:
+== План:
+
+[BestClient]
+Safe:
+== Безопасно:
+
+[BestClient]
+Cost:
+== Время:
+
+[BestClient]
+Override:
+== Вмешательств:
+
+[BestClient]
+Avoid: enabled
+== Avoid: включено
+
+[BestClient]
+Avoid: disabled
+== Avoid: выключено
+
+[BestClient]
+cost
+== время
+
+[BestClient]
+took over
+== вмешательств
+
+[BestClient]
+Disable
+== Отключить
+
+[BestClient]
+Gores bot
+== Gores-бот
+
+[BestClient]
+Enable Gores bot
+== Включить Gores-бота
+
+[BestClient]
+Keeps your movement natural: it weighs staying on course against surviving, and can still fail on the hardest parts.
+== Сохраняет естественность движения: взвешивает курс и выживание, на самых сложных участках может не справиться.
+
+[BestClient]
+Safety first: also steers and uses the hook, and recovers on extreme Gores maps.
+== Безопасность прежде всего: управляет и направлением, и крюком, выручает на экстремальных Gores-картах.
+
+[BestClient]
+Searches whole map segments with a flow field and a genetic input tweaker. CPU heavy.
+== Ищет решение для целых участков карты потоковым полем и генетической подстройкой ввода. Нагружает CPU.
+
+[BestClient]
+Drives the tee itself: autonomous, towards your cursor, or towards another player.
+== Сам ведёт ти: автономно, за курсором или за другим игроком.
+
+[BestClient]
+Only takes over the left and right keys, six ticks ahead. No options of its own.
+== Управляет только клавишами влево/вправо, смотрит на шесть тиков вперёд. Своих настроек не имеет.
+
+[BestClient]
+All bots
+== Общее для всех ботов
+
+[BestClient]
+Player prediction
+== Предсказание игроков
+
+[BestClient]
+Player prediction makes every bot simulate the other tees as well; AFK protection switches the bot off after the configured idle time.
+== Предсказание игроков заставляет бота просчитывать и другие ти: защита от AFK выключает бота после заданного времени бездействия.
+
+[BestClient]
+Render track point
+== Показ точки захвата
+
+[BestClient]
+Render aimbot target
+== Показ цели аимбота
+
+[BestClient]
+Basic only takes over the left and right keys. It always looks six ticks ahead, drops the direction that runs into a freeze, a death tile or another tee, and leaves jump, hook and crosshair exactly as you pressed them.
+== Basic берёт на себя только клавиши влево/вправо. Он всегда смотрит на шесть тиков вперёд, отбрасывает направление, ведущее в заморозку, смерть или другого ти, и не трогает прыжок, крюк и прицел.
+
+[BestClient]
+It is the cheapest bot and the safe default for plain freeze rooms. Pick Legit for fine tuning, Blatant for maximum safety, Fentbot for long map segments or Pilot to let the tee drive itself.
+== Это самый дешёвый бот и надёжный выбор для простых комнат с заморозкой. Для тонкой настройки — Legit, для максимальной безопасности — Blatant, для длинных участков — Fentbot, чтобы ти ехал сам — Pilot.
+
+[BestClient]
+Check ticks is how far ahead every simulated move has to stay safe. Turning an assistance off keeps that part of your input exactly as you pressed it.
+== Тики проверки — сколько тиков каждое смоделированное действие обязано оставаться безопасным. Отключённая помощь оставляет эту часть ввода точно такой, как вы нажали.
+
+[BestClient]
+Priority
+== Приоритеты
+
+[BestClient]
+Quality is the number of simulated moves per decision and Randomness is how much the search explores. The three priorities decide how strongly the bot sticks to your direction, your hook state and to simply surviving.
+== Качество — сколько ходов моделируется за одно решение, случайность — насколько широко идёт поиск. Три приоритета задают, насколько бот держится вашего направления, состояния крюка и просто выживания.
+
+[BestClient]
+Unfreeze ticks
+== Тики разморозки
+
+[BestClient]
+Freeze tiles are always avoided. Death, teleport and unfreeze tiles are optional: switching them on also keeps you away from helpers you may actually want.
+== Заморозка избегается всегда. Смерть, телепорт и разморозка — на выбор: включая их, вы также избегаете помощников, которые могут быть нужны.
+
+[BestClient]
+NSIF (no safe input found)
+== NSIF (безопасного ввода нет)
+
+[BestClient]
+NSIF kicks in when no input survives the whole lookahead: instead of giving up, the bot replays the first step of the last input sequence that was fully safe.
+== NSIF включается, когда ни один ввод не выживает весь горизонт: вместо отказа бот повторяет первый шаг последней полностью безопасной последовательности.
+
+[BestClient]
+Check ticks is how long a simulated move must survive, kick in ticks is how long your own input must survive before the bot stays out of the way. Track point keeps aiming where you last could hook onto a tile; safe aim tracking only holds that aim while it stays safe.
+== Тики проверки — сколько должен выжить смоделированный ход, тики вмешательства — сколько должен выжить ваш собственный ввод, прежде чем бот не станет мешать. Точка захвата удерживает прицел там, где вы последний раз могли зацепиться; безопасный захват держит его, только пока это безопасно.
+
+[BestClient]
+Freeze tiles are always avoided. Turning unfreeze tiles on is only useful on maps where being unfrozen is more dangerous than staying frozen.
+== Заморозка избегается всегда. Избегать разморозки стоит только на картах, где разморозиться опаснее, чем остаться во льду.
+
+[BestClient]
+Enable internal aimbot
+== Включить внутренний аимбот
+
+[BestClient]
+Segments
+== Сегменты
+
+[BestClient]
+Auto aim (longest survival)
+== Автоприцел (дольше всех живёт)
+
+[BestClient]
+Aim assist (closest safe aim)
+== Помощь прицелу (ближайшее безопасное)
+
+[BestClient]
+Segments is how many directions are scanned inside the field of view. Auto aim takes the direction that survives longest, aim assist the safe direction closest to your cursor; both only apply while the internal aimbot is enabled.
+== Сегменты — сколько направлений сканируется в поле зрения. Автоприцел берёт направление с самым долгим выживанием, помощь прицелу — безопасное направление ближе всего к курсору; оба работают только при включённом аимботе.
+
+[BestClient]
+Cross light freeze tiles
+== Проходить лёгкую заморозку
+
+[BestClient]
+Unfreeze radius
+== Радиус разморозки
+
+[BestClient]
+A freeze tile becomes crossable when an unfreeze tile is inside the radius, which is what lets the bot solve light freeze segments.
+== Замороженный тайл становится проходимым, если рядом в радиусе есть тайл разморозки — именно так бот решает участки лёгкой заморозки.
+
+[BestClient]
+Advanced settings
+== Расширенные настройки
+
+[BestClient]
+Quality setting
+== Профиль качества
+
+[BestClient]
+Low
+== Низкий
+
+[BestClient]
+Mid
+== Средний
+
+[BestClient]
+Max
+== Высокий
+
+[BestClient]
+Quality setting picks the presets from the reference client: Low 88, Mid 160 and Max 1000 candidate inputs with 88, 160 and 300 optimisation generations. All of them plan 10000 ticks ahead.
+== Профиль качества берёт пресеты эталонного клиента: Low — 88, Mid — 160, Max — 1000 входных вариантов и 88, 160, 300 поколений оптимизации. Все они планируют на 10000 тиков вперёд.
+
+[BestClient]
+Advanced
+== Дополнительно
+
+[BestClient]
+Fent ticks is how far the search plans ahead, Tweaker inputs how many candidate input sequences each generation has, Tweaker ticks how many ticks one candidate covers and Tweaker dosage how many generations are run. Higher values solve more, but take longer to converge.
+== Fent ticks — насколько далеко планирует поиск, Tweaker inputs — сколько вариантов последовательностей в поколении, Tweaker ticks — сколько тиков покрывает один вариант, Tweaker dosage — сколько поколений выполняется. Большие значения дают лучшее решение, но дольше сходятся.
+
+[BestClient]
+The bot drives the tee towards your mouse cursor and still avoids every hazard on the way.
+== Бот ведёт ти к курсору мыши и по пути избегает всех опасностей.
+
+[BestClient]
+The bot drives the tee towards the closest other player, which is what you want for following a run.
+== Бот ведёт ти к ближайшему другому игроку — то, что нужно для повтора чужого прохождения.
+
+[BestClient]
+The bot drives the tee on its own, following the flow field towards the finish or the next unfreeze tile of the map.
+== Бот ведёт ти сам, следуя потоковому полю к финишу или следующему тайлу разморозки.
+
+[BestClient]
+Population size is how many input sequences are tested, exploration depth how many ticks each of them is simulated for, Top-K how many of the best survive into the next generation and sequence length how many ticks are driven before the plan is replaced by a better one.
+== Размер популяции — сколько последовательностей проверяется, глубина — сколько тиков моделируется для каждой, Top-K — сколько лучших переходят в следующее поколение, длина последовательности — сколько тиков ехать до замены плана на лучший.
+
+[BestClient]
+unknown
+== неизвестно
+
+[BestClient]
+Practice HUD modules
+== HUD-модули для практики
+
+[BestClient]
+Open HUD editor
+== Открыть редактор HUD
+
+[BestClient]
+The TAS status overlay, the Avoid status panel and the TAS trajectory are regular HUD modules: enable, move and scale them in the HUD editor.
+== Оверлей состояния TAS, панель состояния Avoid и траектория TAS — обычные HUD-модули: включайте, двигайте и масштабируйте их в редакторе HUD.
+
+[BestClient]
+HUD Module
+== HUD-модуль
+
+[BestClient]
+grid
+== сетка
+
+[BestClient]
+ready
+== готова
+
+[BestClient]
+building
+== строится
+
+[BestClient]
+Status HUD
+== Статус-панель
+
+[BestClient]
+The search stops after 8 ms per tick to keep the frame rate stable, so very high Quality values stop paying off on maps with many entities.
+== Поиск останавливается через 8 мс на тик ради стабильного FPS, поэтому на картах с большим числом объектов очень высокое качество перестаёт давать выигрыш.
+
+[BestClient]
+Check ticks is how long a simulated move must survive, kick in ticks is how long your own input must survive before the bot stays out of the way.
+== Тики проверки — сколько должен выжить смоделированный ход, тики вмешательства — сколько должен выжить ваш собственный ввод, прежде чем бот не станет мешать.
+
+[BestClient]
+Track point keeps aiming where you last could hook onto a tile, and safe aim tracking only holds that aim while it stays safe.
+== Точка захвата удерживает прицел там, где вы последний раз могли зацепиться; безопасный захват держит его, только пока это безопасно.
+
+[BestClient]
+Track point, safe aim tracking and auto drag need the internal aimbot on the Aimbot tab; without it they change nothing.
+== Точка захвата, безопасный захват и автопритягивание работают только при включённом внутреннем аимботе на вкладке «Аимбот»; без него они ничего не меняют.
+
+[BestClient]
+safe
+== безопасно
+

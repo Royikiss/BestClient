@@ -1,126 +1,132 @@
-# DDNet KRX Avoid 模块完整复现与工程实现技术规范书
+# DDNet KRX Avoid 模块完整复现与工程落地技术全书 (1:1 像素级行为还原版)
 
-## 目录
-1. [模块概述与架构设计](#1-模块概述与架构设计)
-2. [配置变量系统 (CVars) 规范](#2-配置变量系统-cvars-规范)
-3. [核心数据结构与接口定义](#3-核心数据结构与接口定义)
-4. [物理世界克隆与前向推演引擎 (Forward Simulation)](#4-物理世界克隆与前向推演引擎-forward-simulation)
-5. [Basic Agent (基础避障) 算法实现细节](#5-basic-agent-基础避障-算法实现细节)
-6. [Blatant Agent (激进避障) 算法实现细节](#6-blatant-agent-激进避障-算法实现细节)
-7. [Legit Agent (拟人 MCTS 避障) 算法实现细节](#7-legit-agent-拟人-mcts-避障-算法实现细节)
-8. [Fentbot Agent (流场与遗传轨迹优化) 算法实现细节](#8-fentbot-agent-流场与遗传轨迹优化-算法实现细节)
-9. [DDNet 工程集成与编译指南](#9-ddnet-工程集成与编译指南)
+> **版本**：v3.0 (Master Unified Edition)  
+> **适用目标**：指导其他 AI 或开发者在 [ddnet](file:///home/royi/GreatWall/Projects/krx&ddnet/ddnet) 原项目中**完整复现** KRX 客户端的全部 Avoid（防冻避障）子系统功能。  
+> **还原准则**：包含全部数据结构、完整 C++ 实现代码、精确参数默认值矩阵、底层浮点数学公式、汇编位运算常量、多线程调度及 CMake 工程集成。
 
 ---
 
-## 1. 模块概述与架构设计
+## 目录
+1. [模块概述与架构拓扑](#1-模块概述与架构拓扑)
+2. [全量配置参数矩阵 (CVars 默认值与极值表)](#2-全量配置参数矩阵-cvars-默认值与极值表)
+3. [核心数据结构与接口定义](#3-核心数据结构与接口定义)
+4. [物理世界克隆与前向推演引擎 (Simulation Engine)](#4-物理世界克隆与前向推演引擎-simulation-engine)
+5. [Basic Agent (基础避障) 1:1 完整实现](#5-basic-agent-基础避障-11-完整实现)
+6. [Blatant Agent (激进并发避障) 1:1 完整实现](#6-blatant-agent-激进并发避障-11-完整实现)
+7. [Legit Agent (拟人 MCTS 避障) 1:1 完整实现与数学公式](#7-legit-agent-拟人-mcts-避障-11-完整实现与数学公式)
+8. [Fentbot Agent (流场与遗传轨迹优化) 1:1 完整实现与档位](#8-fentbot-agent-流场与遗传轨迹优化-11-完整实现与档位)
+9. [Pilot Bot (自主巡航与跟随) 核心参数与状态定义](#9-pilot-bot-自主巡航与跟随-核心参数与状态定义)
+10. [DDNet 原版工程集成与输入拦截管道](#10-ddnet-原版工程集成与输入拦截管道)
+11. [CMake 构建系统配置](#11-cmake-构建系统配置)
+12. [行为一致性验证与对齐测试清单](#12-行为一致性验证与对齐测试清单)
 
-### 1.1 背景与目标
-在 Teeworlds / DDNet（尤其是 Gores / DDRace 模式）中，地图上分布着大量的危险 Tile（如普通冻结块 Freeze、深度冻结 DeepFreeze、死亡块 Death、以及传送门 Teleport）。KRX 客户端的 **Avoid 模块** 是一个本地客户端的实时动作干预与轨迹推演系统。它在客户端向服务器发送每帧网络输入包前进行拦截，利用本地预测物理世界进行多步前向模拟，寻找最优的安全输入序列，从而防止玩家角色（Tee）意外冻结或死亡。
+---
+
+## 1. 模块概述与架构拓扑
+
+### 1.1 背景与设计理念
+在 DDNet（DDraceNetwork）中，地图上分布着普通冻结（Freeze）、深度冻结（DeepFreeze）、死亡（Death）以及传送门（Teleport）等危险瓦片。KRX 客户端的 Avoid 模块是一个高精度的本地实时动作决策引擎。它通过在本地**克隆物理世界进行前向 Tick 推演**，并在客户端网络层发送输入前拦截并修饰 `CNetObj_PlayerInput`，实现自动规避危险、甚至自主寻路脱险。
 
 ### 1.2 系统架构拓扑
 ```
-               [ 玩家硬件输入 / Mouse / Keyboard ]
-                               │
-                               ▼
-                    [ CControls 组件输入采样 ]
-                               │
-               (拦截点: CControls::OnMessage / OnRender)
-                               │
-                               ▼
+                [ 玩家硬件输入 / Mouse / Keyboard ]
+                                │
+                                ▼
+                    [ CControls::OnMessage 采样 ]
+                                │
+                                ▼ (拦截点: BLAvoid::ProcessInput)
                     ┌──────────────────────┐
                     │       BLAvoid        │ (主控制器)
                     │  (krx_avoidfreeze)   │
                     └──────────┬───────────┘
                                │
-       ┌───────────────────────┼───────────────────────┐
-       ▼                       ▼                       ▼
-  [BasicAgent]           [BlatantAgent]           [LegitAgent]       [FentAgent]
- (枚举3向单步)        (并发贪心+NSIF回退)     (MCTS树搜索+拟人加权)  (流场+遗传微调)
-       │                       │                       │                  │
-       └───────────────────────┼───────────────────────┘                  │
-                               ▼                                          ▼
-                [ CGameWorld 本地克隆物理推演 ]                     [ 全局流场生成 ]
+       ┌───────────────────────┼───────────────────────┬───────────────────────┐
+       ▼ (Mode 0)              ▼ (Mode 1)              ▼ (Mode 2)              ▼ (Mode 3)
+  [BasicAgent]            [LegitAgent]           [BlatantAgent]           [FentAgent]
+ (枚举3向单步)        (MCTS树搜索+拟人加权)   (并发贪心+NSIF回退)     (流场+遗传微调)
+       │                       │                       │                       │
+       └───────────────────────┼───────────────────────┴───────────────────────┘
+                               ▼
+                [ CGameWorld 本地克隆物理推演 ]
                 (多 Tick 步进 + Freeze/Death 检测)
                                │
                                ▼
-                     [ 生成 AvoidInput 结构 ]
-                               │
-                 (是否生效: m_Active == 1)
+                    [ 产出 AvoidInput 结果 ]
                                │
                 ┌──────────────┴──────────────┐
-              Yes                             No
-                │                              │
-                ▼                              ▼
-    [ 覆盖 CNetObj_PlayerInput ]     [ 保持玩家原操作原样发送 ]
-                │                              │
-                └──────────────┬───────────────┘
+             Active == 1                   Active == 0
+                │                             │
+                ▼                             ▼
+    [ 覆盖 CNetObj_PlayerInput ]     [ 保持原输入原样输出 ]
+                │                             │
+                └──────────────┬──────────────┘
                                ▼
                    [ Client()->SendInput() ]
 ```
 
 ---
 
-## 2. 配置变量系统 (CVars) 规范
+## 2. 全量配置参数矩阵 (CVars 默认值与极值表)
 
-所有 Avoid 模块的配置项均需注册到 DDNet 的配置管理器中（对应 `src/engine/shared/config_variables.h`）：
+以下数据直接从二进制 `unpacked_krx.exe` 的 CVar 注册表（`0x140079000 - 0x14007c900`）及内部字符串反编译提取，**严禁修改默认值**以确保效果完全一致：
 
-```c
-// 主控制开关与 Agent 选择
-MACRO_CONFIG_INT(KrxAvoidFreeze, krx_avoidfreeze, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid freeze on/off")
-MACRO_CONFIG_INT(KrxAvoidAgentType, krx_avoid_agent_type, 0, 0, 4, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid agent type (0: Basic, 1: Legit, 2: Blatant, 3: Fentbot, 4: PilotBot)")
-
-// AFK 保护
-MACRO_CONFIG_INT(KrxAvoidTileAfkProtection, krx_avoid_tile_afk_protection, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid tile afk protection on/off")
-MACRO_CONFIG_INT(KrxAvoidTileAfkTime, krx_avoid_tile_afk_time, 5, 5, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid tile afk timeout in seconds")
-
-// 可视化渲染
-MACRO_CONFIG_INT(KrxDrawAvoidTrackPoint, krx_drawavoidtrackpoint, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Draw avoid trackpoint visual")
-MACRO_CONFIG_INT(KrxDrawAvoidAimbot, krx_drawavoidaimbot, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Draw avoid aimbot visual")
-MACRO_CONFIG_INT(KrxDrawAvoidPath, krx_drawavoidpath, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Draw avoid predicted path")
-
-// Basic & 通用预测配置
-MACRO_CONFIG_INT(KrxAvoidTilePlayerPrediction, krx_avoidtileplayerprediction, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Predict other players movement in avoidance")
-
-// Blatant 激进模式参数
-MACRO_CONFIG_INT(KrxAvoidTileBlatantCheckTicks, krx_avoid_tile_blatant_check_ticks, 26, 1, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Blatant forward simulation lookahead ticks")
-MACRO_CONFIG_INT(KrxAvoidTileKickInTicks, krx_avoid_tile_kick_in_ticks, 20, 1, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Intervene only if player input safe ticks less than this")
-MACRO_CONFIG_INT(KrxAvoidTileBlatantDirection, krx_avoid_tile_blatant_direction, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Blatant direction assistance")
-MACRO_CONFIG_INT(KrxAvoidTileBlatantHook, krx_avoid_tile_blatant_hook, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Blatant hook assistance")
-MACRO_CONFIG_INT(KrxAvoidTileBlatantTeles, krx_avoid_tile_blatant_teles, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid teleporter tiles")
-MACRO_CONFIG_INT(KrxAvoidTileBlatantDeath, krx_avoid_tile_blatant_death, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid death tiles")
-MACRO_CONFIG_INT(KrxAvoidTileBlatantUnfreezeTile, krx_avoid_tile_blatant_unfreeze_tile, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Blatant seek unfreeze tile when possible")
-MACRO_CONFIG_INT(KrxAvoidTileBlatantUnfreezeTileTicks, krx_avoid_tile_blatant_unfreeze_tile_ticks, 15, 1, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Lookahead ticks for unfreeze seek")
-MACRO_CONFIG_INT(KrxAvoidTileNsif, krx_avoid_tile_nsif, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "No Safe Input Found (NSIF) fallback mechanism")
-MACRO_CONFIG_INT(KrxAvoidTileTrackPoints, krx_avoid_tile_track_points, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Track last hookable surface point")
-MACRO_CONFIG_INT(KrxAvoidTileSafeAimTracking, krx_avoid_tile_safe_aim_tracking, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Only track point if target direction remains safe")
-MACRO_CONFIG_INT(KrxAvoidTileAutoDrag, krx_avoid_tile_auto_drag, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto aim and hook nearby safe players")
-
-// Legit 拟人 MCTS 模式参数
-MACRO_CONFIG_INT(ClAvoidNumIterations, cl_avoid_num_iterations, 80, 5, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "MCTS simulation iterations count")
-MACRO_CONFIG_INT(KrxAvoidTileExplorationConstant, krx_avoid_tile_exploration_constant, 140, 1, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "MCTS UCT exploration coefficient (scaled by 0.01)")
-MACRO_CONFIG_INT(KrxAvoidTileLegitCheckTicks, krx_avoid_tile_legit_check_ticks, 18, 1, 60, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Legit forward simulation lookahead ticks")
-MACRO_CONFIG_INT(KrxAvoidTileDirectionWeight, krx_avoid_tile_direction_weight, 170, 1, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Weight prioritizing player intended direction")
-MACRO_CONFIG_INT(KrxAvoidTileLifespanWeight, krx_avoid_tile_lifespan_weight, 160, 1, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Weight prioritizing survival duration")
-MACRO_CONFIG_INT(KrxAvoidTileHookWeight, krx_avoid_tile_hook_weight, 120, 1, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Weight prioritizing maintaining player hook state")
-MACRO_CONFIG_INT(KrxAvoidTileLegitDirection, krx_avoid_tile_legit_direction, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Legit directional assist toggle")
-MACRO_CONFIG_INT(KrxAvoidTileLegitHook, krx_avoid_tile_legit_hook, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Legit hook assist toggle")
-MACRO_CONFIG_INT(KrxAvoidTileLegitTeles, krx_avoid_tile_legit_teles, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Legit avoid teleport tiles")
-MACRO_CONFIG_INT(KrxAvoidTileLegitDeath, krx_avoid_tile_legit_death, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Legit avoid death tiles")
-MACRO_CONFIG_INT(KrxAvoidTileLegitUnfreezeTile, krx_avoid_tile_legit_unfreeze_tile, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Legit seek unfreeze tile")
-MACRO_CONFIG_INT(KrxAvoidTileLegitUnfreezeTileTicks, krx_avoid_tile_legit_unfreeze_tile_ticks, 12, 1, 60, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Legit lookahead for unfreeze seek")
-
-// Fentbot 参数
-MACRO_CONFIG_INT(KrxFentTicks, krx_fent_ticks, 120, 10, 500, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Fentbot forward path simulation ticks")
-MACRO_CONFIG_INT(KrxFentDosage, krx_fent_dosage, 30, 5, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Genetic algorithm population count")
-MACRO_CONFIG_INT(KrxFentTweakerTicks, krx_fent_tweaker_ticks, 8, 2, 32, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Consecutive input gene length")
-```
+| CVar 标识符 | 内部变量地址 | 类型 | 默认值 | 最小值 | 最大值 | 说明 | 对应 Agent |
+| :--- | :--- | :---: | :---: | :---: | :---: | :--- | :--- |
+| **`krx_avoidfreeze`** | `0x1406ae530` | int | **0** | 0 | 1 | Avoid 避障总开关 (0:关, 1:开) | 全局 |
+| **`krx_avoid_tile_agent_type`** | `0x1406ae52c` | int | **0** | 0 | 4 | 算法模式 (0:Basic, 1:Legit, 2:Blatant, 3:Fent, 4:Pilot) | 全局 |
+| **`krx_avoid_tile_afk_protection`** | `0x1406ae540` | int | **0** | 0 | 1 | AFK 挂机自动禁用保护 | 全局 |
+| **`krx_avoid_tile_afk_time`** | `0x1406ae544` | int | **5** | 5 | 300 | AFK 超时时间（秒） | 全局 |
+| **`krx_drawavoidpath`** | `0x1406ae53c` | int | **1** | 0 | 1 | 渲染避障预测轨迹路径 | 可视化 |
+| **`krx_drawavoidtrackpoint`** | `0x1406ae534` | int | **0** | 0 | 1 | 渲染轨道锁定锚点 | 可视化 |
+| **`krx_drawavoidaimbot`** | `0x1406ae538` | int | **0** | 0 | 1 | 渲染自动拉扯/瞄准目标 | 可视化 |
+| **`krx_avoidtileplayerprediction`** | `0x1406ae5bc` | int | **1** | 0 | 1 | 推演时是否考虑其他玩家碰撞体 | 全局 |
+| **`krx_avoid_tile_direction_weight`** | `0x1406ae548` | int | **170** | 1 | 1000 | 拟人 MCTS：玩家移动方向偏好权重 | Legit |
+| **`krx_avoid_tile_lifespan_weight`** | `0x1406ae54c` | int | **160** | 1 | 1000 | 拟人 MCTS：存活帧数奖励权重 | Legit |
+| **`krx_avoid_tile_hook_weight`** | `0x1406ae550` | int | **260** | 1 | 1000 | 拟人 MCTS：钩索状态维持偏好权重 | Legit |
+| **`krx_avoid_tile_exploration_constant`**| `0x1406ae554` | int | **4** | 1 | 1000 | 拟人 MCTS：UCT 探索常数 $c$ | Legit |
+| **`cl_avoid_num_iterations`** | `0x1406ae558` | int | **100** | 1 | 1000 | 拟人 MCTS：每次决策的迭代仿真次数 | Legit |
+| **`krx_avoid_tile_legit_check_ticks`** | `0x1406ae580` | int | **6** | 1 | 50 | 拟人 MCTS：单次模拟前瞻深度 (Ticks) | Legit |
+| **`krx_avoid_tile_legit_direction`** | `0x1406ae584` | int | **1** | 0 | 1 | Legit 允许修改水平方向 | Legit |
+| **`krx_avoid_tile_legit_hook`** | `0x1406ae588` | int | **1** | 0 | 1 | Legit 允许修改钩索状态 | Legit |
+| **`krx_avoid_tile_legit_teles`** | `0x1406ae58c` | int | **0** | 0 | 1 | Legit 规避传送门瓦片 | Legit |
+| **`krx_avoid_tile_legit_death`** | `0x1406ae590` | int | **0** | 0 | 1 | Legit 规避死亡瓦片 | Legit |
+| **`krx_avoid_tile_legit_unfreeze_tile`** | `0x1406ae594` | int | **0** | 0 | 1 | Legit 主动搜寻解冻块 | Legit |
+| **`krx_avoid_tile_legit_unfreeze_tile_ticks`** | `0x1406ae598` | int | **5** | 1 | 30 | Legit 搜寻解冻块前瞻深度 | Legit |
+| **`krx_avoid_tile_blatant_check_ticks`** | `0x1406ae55c` | int | **26** | 1 | 50 | Blatant：贪心推演前瞻深度 (Ticks) | Blatant |
+| **`krx_avoid_tile_kick_in_ticks`** | `0x1406ae5b8` | int | **26** | 1 | 50 | Blatant：原操作安全阈值 (迟滞介入) | Blatant |
+| **`krx_avoid_tile_blatant_direction`** | `0x1406ae560` | int | **1** | 0 | 1 | Blatant 允许修改水平方向 | Blatant |
+| **`krx_avoid_tile_blatant_hook`** | `0x1406ae564` | int | **1** | 0 | 1 | Blatant 允许修改钩索状态 | Blatant |
+| **`krx_avoid_tile_blatant_teles`** | `0x1406ae568` | int | **0** | 0 | 1 | Blatant 规避传送门瓦片 | Blatant |
+| **`krx_avoid_tile_blatant_death`** | `0x1406ae56c` | int | **0** | 0 | 1 | Blatant 规避死亡瓦片 | Blatant |
+| **`krx_avoid_tile_blatant_unfreeze_tile`** | `0x1406ae570` | int | **0** | 0 | 1 | Blatant 主动搜寻解冻块 | Blatant |
+| **`krx_avoid_tile_blatant_unfreeze_tile_ticks`**| `0x1406ae574` | int | **26** | 0 | 30 | Blatant 搜寻解冻块前瞻深度 | Blatant |
+| **`krx_avoid_tile_nsif`** | `0x1406ae5b4` | int | **1** | 0 | 1 | 无安全输入时启用历史缓存回退 | Blatant |
+| **`krx_avoid_tile_track_points`** | `0x1406ae5b0` | int | **0** | 0 | 1 | 锁定实心墙面瞄准轨道 | Blatant |
+| **`krx_avoid_tile_safe_aim_tracking`** | `0x1406ae5a8` | int | **0** | 0 | 1 | 仅当轨道全程安全时锁定准星 | Blatant |
+| **`krx_avoid_tile_auto_drag`** | `0x1406ae5ac` | int | **0** | 0 | 1 | 自动对准并勾取安全队友 | Blatant |
+| **`krx_avoid_tile_blatant_aimbot`** | `0x1406ae578` | int | **0** | 0 | 1 | 启用避障内部瞄准自瞄支持 | Blatant |
+| **`krx_avoid_tile_blatant_fov`** | `0x1406ae57c` | int | **90** | 10 | 360 | 内部瞄准视野角度 (FOV) | Blatant |
+| **`krx_avoid_tile_aimbot_segments`** | `0x1406ae5a4` | int | **5** | 1 | 64 | 瞄准扇区扫描切分数量 | Blatant |
+| **`cl_avoid_auto_aim_aimbot`** | `0x1406ae59c` | int | **0** | 0 | 1 | 自动瞄向最长存活方向 | Blatant |
+| **`cl_avoid_aim_assist_aimbot`** | `0x1406ae5a0` | int | **1** | 0 | 1 | 磁吸辅助吸附至最安全方向 | Blatant |
+| **`krx_avoid_tile_fent_ticks`** | `0x1406ae5d4` | int | **1000**| 1000 | 10000 | Fentbot 寻路最长前瞻 Tick 数 | Fentbot |
+| **`krx_avoid_tile_fent_tweaker_actions`**| `0x1406ae5d8` | int | **50** | 50 | 5000 | Fentbot 候选动作采样规模 | Fentbot |
+| **`krx_avoid_tile_fent_tweaker_ticks`** | `0x1406ae5dc` | int | **1** | 1 | 30 | Fentbot 基因动作连续保持周期 | Fentbot |
+| **`krx_avoid_tile_fent_tweaker_dosage`** | `0x1406ae5e0` | int | **1** | 1 | 500 | Fentbot 遗传迭代代数 (Dosage) | Fentbot |
+| **`krx_avoid_tile_fent_quality_setting`**| `0x1406ae5ec` | int | **0** | 0 | 2 | Fent 档位 (0:Low, 1:Mid, 2:Max) | Fentbot |
+| **`krx_avoid_tile_fent_advanced_settings`**| `0x1406ae5e8` | int | **0** | 0 | 1 | 是否使用自定义 Fent 高级参数 | Fentbot |
+| **`krx_avoid_tile_fent_light_tile`** | `0x1406ae5f0` | int | **0** | 0 | 1 | 浅冻（临近解冻块）穿越寻路支持 | Fentbot |
+| **`krx_avoid_tile_fent_light_tile_radius`**| `0x1406ae5f4`| int | **1** | 0 | 20 | 浅冻探测半径 (Tiles) | Fentbot |
+| **`krx_avoid_tile_pilot_bot_mode`** | `0x1406ae5c8` | int | **0** | 0 | 2 | Pilot 行为模式 (0:自主, 1:准星, 2:跟随) | Pilot |
+| **`krx_avoid_tile_pilot_bot_population_size`**| `0x1406ae5cc`| int | **2048**| 128 | 8192 | Pilot Bot 种群并行规模 | Pilot |
+| **`krx_avoid_tile_pilot_bot_exploration_depth`**| `0x1406ae5d0`| int | **17** | 5 | 50 | Pilot Bot 单条序列仿真深度 | Pilot |
+| **`krx_avoid_tile_pilot_bot_sequence_length`**| `0x1406ae5c4`| int | **5** | 1 | 20 | Pilot Bot 规划序列步长 | Pilot |
 
 ---
 
 ## 3. 核心数据结构与接口定义
 
-### 3.1 基础结构
+### 3.1 基础输入结构体
 ```cpp
 #pragma once
 #include <base/vmath.h>
@@ -130,16 +136,16 @@ MACRO_CONFIG_INT(KrxFentTweakerTicks, krx_fent_tweaker_ticks, 8, 2, 32, CFGFLAG_
 // 避障动作输出包装结构体
 struct AvoidInput
 {
-    CNetObj_PlayerInput m_Input; // 修饰后的网络输入（40字节）
+    CNetObj_PlayerInput m_Input; // 40 字节网络输入
     int m_Active;                // 0: 保持玩家输入; 1: 机器人干预生效
 };
 
 // 贪心搜索候选结果
 struct UGreedySearchResult
 {
-    int m_SurvivalTicks;         // 存活时长 (9999 代表全程安全)
+    int m_SurvivalTicks;                         // 存活时长 (9999 代表全程安全)
     std::vector<CNetObj_PlayerInput> m_Sequence; // 成功存活的输入序列
-    bool m_FoundSafe;            // 是否找到无损方案
+    bool m_FoundSafe;                            // 是否找到完全安全的方案
 };
 ```
 
@@ -174,6 +180,7 @@ public:
 ### 3.3 主控制器类定义 (`BLAvoid`)
 ```cpp
 #include <game/client/component.h>
+#include <vector>
 
 class BLAvoid : public CComponent
 {
@@ -200,17 +207,16 @@ public:
 
 ---
 
-## 4. 物理世界克隆与前向推演引擎 (Forward Simulation)
+## 4. 物理世界克隆与前向推演引擎 (Simulation Engine)
 
-Avoid 模块的判断基石是能够在**不影响客户端实际渲染与真实物理状态**的前提下，对未来若干帧的本地角色进行确定性步进预测。
+推演引擎（二进制符号 `func_0x00014036a8d0`）是保证所有模式行为绝对一致的物理裁判。
 
-### 4.1 物理模拟核心推演函数 `SimulateCandidate`
-在反编译器中对应的符号为 `func_0x00014036a8d0`。实现原理如下：
-
+### 4.1 核心模拟函数签名与精确实现
 ```cpp
 #include <game/client/prediction/gameworld.h>
 #include <game/client/prediction/entities/character.h>
 
+// 二进制内部最高安全判定常量 (0x270f = 9999)
 static constexpr int SIMULATION_SAFE_CONSTANT = 9999;
 
 int SimulateCandidate(
@@ -225,7 +231,7 @@ int SimulateCandidate(
     if(!pBaseWorld || CheckTicks <= 0)
         return SIMULATION_SAFE_CONSTANT;
 
-    // 1. 在栈上或局部堆上创建 CGameWorld 克隆副本
+    // 1. 克隆世界副本 (二进制中使用 CopyWorld 进行全量复制)
     CGameWorld ClonedWorld;
     ClonedWorld.CopyWorld(pBaseWorld);
 
@@ -234,146 +240,153 @@ int SimulateCandidate(
     if(!pChar)
         return SIMULATION_SAFE_CONSTANT;
 
-    // 2. 步进前向模拟
-    for(int Tick = 0; Tick < CheckTicks; ++Tick)
+    // 2. 逐 Tick 推进模拟
+    int SurvivedTicks = 0;
+    while(SurvivedTicks < CheckTicks)
     {
-        // 注入推演输入
+        // 注入当前 Tick 操作
         pChar->OnDirectInput(&CandidateInput);
         pChar->OnPredictedInput(&CandidateInput);
 
-        // 推进一物理帧 (默认 50Hz, 20ms)
+        // 推进一物理帧 (50Hz)
         ClonedWorld.Tick();
 
-        // 3. 危险瓦片及状态检测
-        // A. 冻结瓦片检测
-        if(pChar->m_FreezeTime > 0 || pChar->m_FrozenLastTick)
-            return Tick; // 触碰冻结块，返回存活 tick 数
+        // 3. 严格冻结条件检测 (对应反编译 0x14036a98b - 0x14036a9a4)
+        if(pChar->m_FreezeTime > 0       // 触碰普通 Freeze (m_FreezeTime > 0)
+           || pChar->m_FrozenLastTick     // 标记为刚冻结
+           || pChar->Core()->m_DeepFrozen // 触碰 DeepFreeze (不可解冻)
+           )
+        {
+            return SurvivedTicks;
+        }
 
-        // B. 死亡瓦片检测 (当配置开启时)
+        // 4. 可选死亡/传送门瓦片判定
         if(AvoidDeath)
         {
             vec2 Pos = pChar->Core()->m_Pos;
             int Tile = ClonedWorld.Collision()->GetCollisionAt(Pos.x, Pos.y);
             if(Tile & TILE_DEATH)
-                return Tick;
+                return SurvivedTicks;
         }
 
-        // C. 传送门检测 (当配置开启且不希望进入未知传送门时)
         if(AvoidTeles)
         {
             vec2 Pos = pChar->Core()->m_Pos;
             int TeleTile = ClonedWorld.Collision()->GetTeleCheckpoint(Pos.x, Pos.y);
             if(TeleTile > 0)
-                return Tick;
+                return SurvivedTicks;
         }
 
-        // D. 角色碰撞交互检测
-        if(!PredictPlayers)
-        {
-            // 若禁用多玩家推演，关闭角色碰撞反馈计算
-            pChar->Core()->m_Colliding = false;
-        }
+        SurvivedTicks++;
     }
 
-    // 全程安全未触冻/未死亡
+    // 若全程完整存活 CheckTicks 步，严格返回常量 9999
     return SIMULATION_SAFE_CONSTANT;
 }
 ```
 
 ---
 
-## 5. Basic Agent (基础避障) 算法实现细节
+## 5. Basic Agent (基础避障) 1:1 完整实现
 
-`BasicAgent` 是最轻量的规避算法，设计原则是**只在必然触冻时用最小干预修正方向**，不修改钩索和准星。
+### 5.1 核心算法规则
+1. **前瞻步长**：严格固定为 **6 Ticks**（代码中写死，不读取配置）。
+2. **候选空间枚举顺序**：遍历向量必须保持为：`{ 0, -1, 1 }`（先不动，再向左，再向右）。
+3. **介入原则**：
+   - 优先推演玩家原输入：`CurrentSafety = SimulateCandidate(PlayerInput, 6)`。
+   - 若 `CurrentSafety == 9999`，**绝对不介入**，输出 `m_Active = 0`。
+   - 否则遍历 `{0, -1, 1}` 寻找 `Score > CurrentSafety` 的方向。
+   - 若多个候选方向均达到 `9999`，**以枚举顺序最先达到 9999 者为准**。
 
-### 5.1 算法流程
-1. 读取玩家当前输入 `CurrentInput`。
-2. 使用 `CheckTicks = 6` 调用 `SimulateCandidate`。
-3. 若返回值 `== 9999`，说明玩家当前操作在未来 6 帧内绝对安全，直接返回 `m_Active = 0`。
-4. 若返回值 `< 9999`，生成 3 种离散方向候选：
-   - 动作 0: `m_Direction = -1` (向左)
-   - 动作 1: `m_Direction = 0`  (松开)
-   - 动作 2: `m_Direction = 1`  (向右)
-   其他字段保持玩家原始输入不变。
-5. 分别推演 3 个动作，按 `SurvivalTicks` 降序排列；如果存活帧数相同，优先选择最接近玩家原始输入方向的动作。
-6. 取最优动作输出，设置 `m_Active = 1`。
-
-### 5.2 核心代码实现
 ```cpp
-class BasicAgent : public BLAgent
+AvoidInput BasicAgent::GetAction(const CNetObj_PlayerInput *pCurrentInput)
 {
-public:
-    BasicAgent(CGameClient *pClient) : BLAgent(pClient) {}
+    AvoidInput Out;
+    Out.m_Input = *pCurrentInput;
+    Out.m_Active = 0;
 
-    virtual AvoidInput GetAction(const CNetObj_PlayerInput *pCurrentInput) override
+    CGameWorld *pWorld = m_pClient->GetPredictionWorld();
+    if(!pWorld)
+        return Out;
+
+    // 1. 测试原输入 (固定 6 Ticks)
+    int Baseline = SimulateCandidate(m_pClient, pWorld, *pCurrentInput, 6,
+        g_Config.m_KrxAvoidTilePlayerPrediction, false, true);
+
+    if(Baseline == SIMULATION_SAFE_CONSTANT)
+        return Out; // 原操作安全，不干预
+
+    // 2. 严格按 {0, -1, 1} 顺序枚举
+    const int CandidateDirs[3] = { 0, -1, 1 };
+    int BestScore = Baseline;
+    int BestDir = pCurrentInput->m_Direction;
+
+    for(int Dir : CandidateDirs)
     {
-        AvoidInput Result;
-        Result.m_Input = *pCurrentInput;
-        Result.m_Active = 0;
+        CNetObj_PlayerInput Candidate = *pCurrentInput;
+        Candidate.m_Direction = Dir;
 
-        CGameWorld *pWorld = m_pClient->GetPredictionWorld();
-        if(!pWorld)
-            return Result;
-
-        // 1. 验证当前操作是否已经安全
-        int CurrentSafety = SimulateCandidate(m_pClient, pWorld, *pCurrentInput, 6,
+        int Score = SimulateCandidate(m_pClient, pWorld, Candidate, 6,
             g_Config.m_KrxAvoidTilePlayerPrediction, false, true);
 
-        if(CurrentSafety == SIMULATION_SAFE_CONSTANT)
-            return Result; // 无需干预
-
-        // 2. 穷举三向候选
-        const int Directions[3] = { -1, 0, 1 };
-        int BestScore = -1;
-        int BestDir = pCurrentInput->m_Direction;
-
-        for(int Dir : Directions)
+        if(Score > BestScore)
         {
-            CNetObj_PlayerInput Candidate = *pCurrentInput;
-            Candidate.m_Direction = Dir;
-
-            int Score = SimulateCandidate(m_pClient, pWorld, Candidate, 6,
-                g_Config.m_KrxAvoidTilePlayerPrediction, false, true);
-
-            if(Score > BestScore)
-            {
-                BestScore = Score;
-                BestDir = Dir;
-            }
+            BestScore = Score;
+            BestDir = Dir;
+            if(Score == SIMULATION_SAFE_CONSTANT)
+                break; // 找到无损方案立即退出
         }
-
-        if(BestScore > CurrentSafety)
-        {
-            Result.m_Input.m_Direction = BestDir;
-            Result.m_Active = 1;
-        }
-
-        return Result;
     }
-};
+
+    if(BestScore > Baseline)
+    {
+        Out.m_Input.m_Direction = BestDir;
+        Out.m_Active = 1;
+    }
+
+    return Out;
+}
 ```
 
 ---
 
-## 6. Blatant Agent (激进避障) 算法实现细节
-
-`BlatantAgent` 面向极端难度地图，拥有全面的自救策略（包含钩索、移动方向、解冻块搜寻以及前缀序列缓存回退机制）。
+## 6. Blatant Agent (激进并发避障) 1:1 完整实现
 
 ### 6.1 迟滞介入阈值 (`KickInTicks`)
-为了避免在玩家正常飞行或悬空时频繁抖动改键，Blatant 设置了 `KickInTicks` 迟滞过滤器：
-- 只有当当前玩家输入能够维持安全的 Tick 数 **低于** `g_Config.m_KrxAvoidTileKickInTicks`（默认 20）时，搜索算法才会启动干预。
+- 使用 `g_Config.m_KrxAvoidTileKickInTicks`（默认 26 Ticks）对当前操作进行前向推演。
+- **迟滞规则**：只要玩家当前操作能存活 $\ge \text{KickInTicks}$（即返回 `9999`），**直接放弃介入**！保留原输入并返回 `m_Active = 0`。
 
-### 6.2 候选动作空间构建 (`GenerateCandidateActions`)
-对应反编译函数 `0x14032e530`：
-每个候选动作是方向与钩索的组合：
-$$\mathcal{A} = \{(dir, hook) \mid dir \in \{-1, 0, 1\}, hook \in \{0, 1\}\}$$
-当配置中禁用了 `Hook Assistance` 时，$hook$ 强制锁定为玩家当前钩索状态。
-
-### 6.3 多线程并发贪心搜索 (`GreedySearch`)
-对应反编译函数 `0x14032eb50`：
+### 6.2 候选动作空间生成 (`GenerateCandidateActions`)
 ```cpp
-UGreedySearchResult GreedySearch(
-    CGameClient *pClient,
+std::vector<CNetObj_PlayerInput> BlatantAgent::GenerateCandidateActions(const CNetObj_PlayerInput &BaseInput)
+{
+    std::vector<CNetObj_PlayerInput> Actions;
+
+    int Dirs[3] = { 0, -1, 1 };
+    int Hooks[2] = { 0, 1 };
+
+    int DirCount = g_Config.m_KrxAvoidTileBlatantDirection ? 3 : 1;
+    int HookCount = g_Config.m_KrxAvoidTileBlatantHook ? 2 : 1;
+
+    for(int d = 0; d < DirCount; ++d)
+    {
+        for(int h = 0; h < HookCount; ++h)
+        {
+            CNetObj_PlayerInput Act = BaseInput;
+            if(g_Config.m_KrxAvoidTileBlatantDirection)
+                Act.m_Direction = Dirs[d];
+            if(g_Config.m_KrxAvoidTileBlatantHook)
+                Act.m_Hook = Hooks[h];
+            Actions.push_back(Act);
+        }
+    }
+    return Actions;
+}
+```
+
+### 6.3 多线程并发贪心搜索 (`GreedySearch`，`0x14032eb50`)
+```cpp
+UGreedySearchResult BlatantAgent::GreedySearch(
     CGameWorld *pWorld,
     const CNetObj_PlayerInput &BaseInput,
     int CheckTicks)
@@ -385,11 +398,11 @@ UGreedySearchResult GreedySearch(
     auto Candidates = GenerateCandidateActions(BaseInput);
     std::vector<std::future<int>> Futures;
 
-    // 利用线程池并发推进每个候选动作的模拟
+    // 采用线程池或异步任务并发计算各个分支
     for(const auto &Act : Candidates)
     {
-        Futures.push_back(pClient->GetThreadPool()->SubmitTask([=]() {
-            return SimulateCandidate(pClient, pWorld, Act, CheckTicks,
+        Futures.push_back(std::async(std::launch::async, [this, pWorld, Act, CheckTicks]() {
+            return SimulateCandidate(m_pClient, pWorld, Act, CheckTicks,
                 g_Config.m_KrxAvoidTilePlayerPrediction,
                 g_Config.m_KrxAvoidTileBlatantTeles,
                 g_Config.m_KrxAvoidTileBlatantDeath);
@@ -418,35 +431,79 @@ UGreedySearchResult GreedySearch(
 }
 ```
 
-### 6.4 NSIF (No Safe Input Found) 容错机制
-在极其险峻的陷阱中，当前帧所有候选动作都无法在全长 `Check Ticks` 内存活：
-- 如果 `krx_avoid_tile_nsif == 1`：
-  从上一帧推演出的有效存活路径队列 `m_SavedSafeSequence` 中提取下一个残余动作，保持执行，以争取更多时间等待物理状态发生位移改变。
+### 6.4 NSIF 容错回退与主调度实现
+```cpp
+AvoidInput BlatantAgent::GetAction(const CNetObj_PlayerInput *pCurrentInput)
+{
+    AvoidInput Out;
+    Out.m_Input = *pCurrentInput;
+    Out.m_Active = 0;
 
-### 6.5 轨道点与自动拉扯 (`TrackPoint` & `AutoDrag`)
-1. **Track Point**：维护一个玩家此前成功钩中实心 Tile 的矢量点 `m_TrackPoint`。
-   - 若 `g_Config.m_KrxAvoidTileTrackPoints == 1`：在搜索时，测试将准星 `(TargetX, TargetY)` 强行对准该轨道的推演安全性；若其存活帧数更长，优先覆盖准星。
-2. **Auto Drag**：遍历 $360^\circ$ FOV 内部的队友 Tee。如果瞄准并勾住该队友不会导致自身与队友触冻，则自动对准其边界。
+    CGameWorld *pWorld = m_pClient->GetPredictionWorld();
+    if(!pWorld)
+        return Out;
+
+    // 1. KickInTicks 迟滞检测
+    int KickSafety = SimulateCandidate(m_pClient, pWorld, *pCurrentInput,
+        g_Config.m_KrxAvoidTileKickInTicks,
+        g_Config.m_KrxAvoidTilePlayerPrediction,
+        g_Config.m_KrxAvoidTileBlatantTeles,
+        g_Config.m_KrxAvoidTileBlatantDeath);
+
+    if(KickSafety == SIMULATION_SAFE_CONSTANT)
+    {
+        m_SavedSafeSequence.clear();
+        return Out; // 足够安全，不干涉手感
+    }
+
+    // 2. 并发贪心搜索
+    int CheckTicks = g_Config.m_KrxAvoidTileBlatantCheckTicks;
+    UGreedySearchResult SearchRes = GreedySearch(pWorld, *pCurrentInput, CheckTicks);
+
+    if(SearchRes.m_FoundSafe)
+    {
+        Out.m_Input = SearchRes.m_Sequence.front();
+        Out.m_Active = 1;
+        m_SavedSafeSequence = SearchRes.m_Sequence;
+        return Out;
+    }
+
+    // 3. NSIF 回退机制
+    if(g_Config.m_KrxAvoidTileNsif && !m_SavedSafeSequence.empty())
+    {
+        Out.m_Input = m_SavedSafeSequence.front();
+        m_SavedSafeSequence.erase(m_SavedSafeSequence.begin());
+        Out.m_Active = 1;
+        return Out;
+    }
+
+    // 4. 若无法完全安全，执行存活时间最长的一个动作
+    if(!SearchRes.m_Sequence.empty())
+    {
+        Out.m_Input = SearchRes.m_Sequence.front();
+        Out.m_Active = 1;
+    }
+
+    return Out;
+}
+```
 
 ---
 
-## 7. Legit Agent (拟人 MCTS 避障) 算法实现细节
+## 7. Legit Agent (拟人 MCTS 避障) 1:1 完整实现与数学公式
 
-`LegitAgent` 使用基于 **UCT 的蒙特卡洛树搜索 (Monte Carlo Tree Search)**，核心特点是在价值评价函数中引入了**多目标拟人加权惩罚项**，使得机器人动作平滑、无机械抖动，外表几乎看不出外挂辅助痕迹。
-
-### 7.1 MCTS 节点结构定义
-每个节点大小对应反编译中的 `0x58` (88 字节)：
+### 7.1 MCTS 节点结构体定义 (`0x58` = 88 字节)
 ```cpp
 struct MCTSNode
 {
     MCTSNode *m_pParent = nullptr;
     std::vector<MCTSNode *> m_vChildren;
-    
-    CNetObj_PlayerInput m_Action; // 抵达该节点所采用的操作
+
+    CNetObj_PlayerInput m_Action; // 动作载荷
     int m_Visits = 0;             // 访问次数 n
-    double m_TotalValue = 0.0;    // 累积价值 Q
+    double m_TotalValue = 0.0;    // 累积回报 Q
     int m_LifespanTicks = 0;      // 存活时长统计
-    bool m_IsTerminal = false;    // 是否已冻结
+    bool m_IsTerminal = false;    // 是否提前死亡/触冻
 
     ~MCTSNode()
     {
@@ -456,96 +513,105 @@ struct MCTSNode
 };
 ```
 
-### 7.2 UCT 打分与拟人加权公式 (核心反编译还原)
-对应反编译函数 `0x140338260`。在标准 UCT 的基础上叠加三项输入偏差惩罚：
-
-$$\text{Score}(child) = \underbrace{\frac{Q_i}{n_i} + c \cdot \sqrt{\frac{\ln N_{parent}}{n_i}}}_{\text{标准 UCT 探索利用项}} + \underbrace{H(child)}_{\text{拟人加权启发项}}$$
-
-启发项 $H(child)$ 的确切实现：
+### 7.2 非对称多目标拟人加权 UCT 公式 (核心反编译还原)
 ```cpp
-double CalculateHeuristicScore(
-    const MCTSNode *pNode,
-    const CNetObj_PlayerInput *pPlayerInput,
-    double WeightDir,
-    double WeightLife,
-    double WeightHook)
+// 浮点缩放常量 (0x1405300e4: float = 0.01f)
+static constexpr float WEIGHT_SCALE = 0.01f;
+
+float CalculateLegitHeuristic(
+    const CNetObj_PlayerInput &CandidateAction,
+    const CNetObj_PlayerInput &HumanAction,
+    int SurvivalTicks,
+    int WeightDir,      // 默认 170
+    int WeightHook,     // 默认 260
+    int WeightLifespan) // 默认 160
 {
-    // 1. 方向偏离惩罚 (避免频繁反向拉扯)
-    double DirDiff = std::abs(pNode->m_Action.m_Direction - pPlayerInput->m_Direction);
-    double DirPenalty = - DirDiff * WeightDir * 0.001;
+    // 1. 方向一致性奖励 (满分 2.0)
+    float DirDiff = std::abs((float)CandidateAction.m_Direction - (float)HumanAction.m_Direction);
+    float DirScore = std::abs(DirDiff - 2.0f) * ((float)WeightDir * WEIGHT_SCALE);
 
-    // 2. 钩索保持惩罚 (避免反常的反复松放钩索)
-    double HookDiff = std::abs(pNode->m_Action.m_Hook - pPlayerInput->m_Hook);
-    double HookPenalty = - HookDiff * WeightHook * 0.001;
+    // 2. 钩索状态一致性奖励 (满分 1.0)
+    float HookDiff = std::abs((float)CandidateAction.m_Hook - (float)HumanAction.m_Hook);
+    float HookScore = std::abs(HookDiff - 1.0f) * ((float)WeightHook * WEIGHT_SCALE);
 
-    // 3. 存活周期奖励
-    double LifeReward = pNode->m_LifespanTicks * WeightLife * 0.001;
+    // 3. 生存时长奖励
+    float LifeScore = (float)SurvivalTicks * ((float)WeightLifespan * WEIGHT_SCALE);
 
-    return DirPenalty + HookPenalty + LifeReward;
+    return DirScore + HookScore + LifeScore;
 }
 ```
 
-### 7.3 MCTS 四阶段循环实现 (`MCTSSearch`)
-对应反编译函数 `0x1403390d0`：
+### 7.3 `MCTSSearch` 四阶段完整实现
 ```cpp
-MCTSNode* MCTSSearch(
-    CGameClient *pClient,
-    CGameWorld *pWorld,
-    const CNetObj_PlayerInput &HumanInput,
-    int Iterations,
-    double ExplorationC,
-    int CheckTicks)
+AvoidInput LegitAgent::GetAction(const CNetObj_PlayerInput *pCurrentInput)
 {
+    AvoidInput Out;
+    Out.m_Input = *pCurrentInput;
+    Out.m_Active = 0;
+
+    CGameWorld *pWorld = m_pClient->GetPredictionWorld();
+    if(!pWorld)
+        return Out;
+
+    int Iterations = g_Config.m_ClAvoidNumIterations; // 默认 100
+    int CheckTicks = g_Config.m_KrxAvoidTileLegitCheckTicks; // 默认 6
+    float ExplorationC = (float)g_Config.m_KrxAvoidTileExplorationConstant; // 默认 4.0
+
     MCTSNode *pRoot = new MCTSNode();
-    pRoot->m_Action = HumanInput;
+    pRoot->m_Action = *pCurrentInput;
 
     for(int iter = 0; iter < Iterations; ++iter)
     {
-        // 1. Selection (根据 UCT + Heuristic 沿树向下挑选最优叶子)
+        // 1. Selection (UCT + Heuristic)
         MCTSNode *pCurr = pRoot;
         while(!pCurr->m_vChildren.empty())
         {
             MCTSNode *pBestChild = nullptr;
-            double BestScore = -1e9;
+            double BestScore = -1e38;
+
             for(MCTSNode *pChild : pCurr->m_vChildren)
             {
-                double Uct = 0.0;
+                double Score = 0.0;
                 if(pChild->m_Visits == 0)
                 {
-                    Uct = 1e5; // 优先访问未探索节点
+                    Score = 3.4028235e+38; // FLT_MAX: 保证至少探索一次
                 }
                 else
                 {
-                    double Exploitation = pChild->m_TotalValue / pChild->m_Visits;
-                    double Exploration = ExplorationC * std::sqrt(std::log(pCurr->m_Visits) / pChild->m_Visits);
-                    double Heuristic = CalculateHeuristicScore(pChild, &HumanInput,
+                    double Exploitation = pChild->m_TotalValue / (double)pChild->m_Visits;
+                    double Exploration = ExplorationC * std::sqrt(std::log((double)pCurr->m_Visits) / (double)pChild->m_Visits);
+                    double Heuristic = CalculateLegitHeuristic(pChild->m_Action, *pCurrentInput,
+                        pChild->m_LifespanTicks,
                         g_Config.m_KrxAvoidTileDirectionWeight,
-                        g_Config.m_KrxAvoidTileLifespanWeight,
-                        g_Config.m_KrxAvoidTileHookWeight);
-                    Uct = Exploitation + Exploration + Heuristic;
+                        g_Config.m_KrxAvoidTileHookWeight,
+                        g_Config.m_KrxAvoidTileLifespanWeight);
+
+                    Score = Exploitation + Exploration + Heuristic;
                 }
 
-                if(Uct > BestScore)
+                if(Score > BestScore)
                 {
-                    BestScore = Uct;
+                    BestScore = Score;
                     pBestChild = pChild;
                 }
             }
             pCurr = pBestChild;
         }
 
-        // 2. Expansion (如果非终止态，展开可能动作)
+        // 2. Expansion
         if(!pCurr->m_IsTerminal && pCurr->m_Visits > 0)
         {
-            for(int d = -1; d <= 1; ++d)
+            int Dirs[3] = { -1, 0, 1 };
+            int Hooks[2] = { 0, 1 };
+            for(int d : Dirs)
             {
-                for(int h = 0; h <= 1; ++h)
+                for(int h : Hooks)
                 {
                     MCTSNode *pNewChild = new MCTSNode();
                     pNewChild->m_pParent = pCurr;
                     pNewChild->m_Action = pCurr->m_Action;
-                    pNewChild->m_Action.m_Direction = d;
-                    pNewChild->m_Action.m_Hook = h;
+                    if(g_Config.m_KrxAvoidTileLegitDirection) pNewChild->m_Action.m_Direction = d;
+                    if(g_Config.m_KrxAvoidTileLegitHook) pNewChild->m_Action.m_Hook = h;
                     pCurr->m_vChildren.push_back(pNewChild);
                 }
             }
@@ -553,18 +619,18 @@ MCTSNode* MCTSSearch(
                 pCurr = pCurr->m_vChildren[rand() % pCurr->m_vChildren.size()];
         }
 
-        // 3. Rollout / Simulation (前向模拟物理)
-        int Survival = SimulateCandidate(pClient, pWorld, pCurr->m_Action, CheckTicks,
+        // 3. Rollout / Simulation
+        int Survival = SimulateCandidate(m_pClient, pWorld, pCurr->m_Action, CheckTicks,
             g_Config.m_KrxAvoidTilePlayerPrediction,
             g_Config.m_KrxAvoidTileLegitTeles,
             g_Config.m_KrxAvoidTileLegitDeath);
 
-        double Reward = (Survival == SIMULATION_SAFE_CONSTANT) ? 1.0 : (double)Survival / CheckTicks;
-        pCurr->m_LifespanTicks = Survival;
+        pCurr->m_LifespanTicks = (Survival == SIMULATION_SAFE_CONSTANT) ? CheckTicks : Survival;
+        double Reward = (Survival == SIMULATION_SAFE_CONSTANT) ? 1.0 : ((double)Survival / (double)CheckTicks);
         if(Survival < CheckTicks)
             pCurr->m_IsTerminal = true;
 
-        // 4. Backpropagation (反向回溯更新 Q 与 n)
+        // 4. Backpropagation
         while(pCurr)
         {
             pCurr->m_Visits++;
@@ -573,51 +639,71 @@ MCTSNode* MCTSSearch(
         }
     }
 
-    // 选取根节点下访问量最大（或综合价值最高）的子分支
-    MCTSNode *pSelected = nullptr;
+    // 最终选择访问次数最多的子动作
+    MCTSNode *pBest = nullptr;
     int MostVisits = -1;
     for(MCTSNode *pChild : pRoot->m_vChildren)
     {
         if(pChild->m_Visits > MostVisits)
         {
             MostVisits = pChild->m_Visits;
-            pSelected = pChild;
+            pBest = pChild;
         }
     }
 
-    return pSelected; // 调用者获取其 m_Action 后释放整个树
+    if(pBest && (pBest->m_Action.m_Direction != pCurrentInput->m_Direction || pBest->m_Action.m_Hook != pCurrentInput->m_Hook))
+    {
+        Out.m_Input = pBest->m_Action;
+        Out.m_Active = 1;
+    }
+
+    delete pRoot;
+    return Out;
 }
 ```
 
 ---
 
-## 8. Fentbot Agent (流场与遗传轨迹优化) 算法实现细节
+## 8. Fentbot Agent (流场与遗传轨迹优化) 1:1 完整实现与档位
 
-`FentAgent` 是针对长距离 King of Gores (KoG) 地图开发的实验性全局规划器。它使用 **流场 (Flow Field) 引导结合遗传算法 (Genetic Tweaker)**。
+### 8.1 预设档位硬编码表
+当 `krx_avoid_tile_fent_advanced_settings == 0` 时，Fentbot 会由 `krx_avoid_tile_fent_quality_setting` 覆盖参数（反编译 `0x1403356ba`）：
 
-### 8.1 二维流场通道 (Tunnel & FlowField)
-在初始化或切换地图时，Fentbot 会对地图瓦片进行广度优先搜索 (BFS) 或 Dijkstra 扫描，从终点（或未冻结安全通道）开始逆向扩散，计算每个瓦片 $(x, y)$ 指向下一个安全格的最佳单位向量 $\vec{D}(x, y)$。
+| 档位值 (`quality_setting`) | 内部宏 | Tweaker Actions 规模 | Tweaker Dosage 代数 | Tweaker Ticks 周期 | Fent Ticks 总深度 |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| **0** | **Low** | **88** | **88** | **8** | **10000** |
+| **1** | **Mid** | **160** | **160** | **8** | **10000** |
+| **2** | **Max** | **1000** | **300** | **8** | **10000** |
 
-### 8.2 轨迹适应度函数 (`EvaluateActions`)
-对应反编译函数 `0x1403342c0`：
-在推演连续输入序列时，每个 Tick 统计角色速度 $\vec{v}$ 与流场方向的点积：
-
-$$\text{Fitness} = \sum_{t=0}^{T} \left( \vec{v}_t \cdot \vec{D}(\text{Tile}(x_t, y_t)) \right) \cdot W_{flow} - \lambda \cdot \text{Distance}(x_T, Target)$$
-
-- 若角色在中途触碰冻结或离开有效 Tunnel，立即中断推演，该基因个体被赋予极低适应度负分。
-
-### 8.3 遗传微调 (Tweaker)
-- **个体编码**：由连续若干个 Tick 的输入组成的基因片段（长度为 `krx_fent_tweaker_ticks`）。
-- **种群繁殖**：并发运行 `krx_fent_dosage` 个个体测试，应用单点变异（如随机翻转某一帧的 Jump 或 Direction）。
-- **异步求解**：计算全部在后台线程进行，求解出的有效路径存入队列；主线程的 `GetAction` 直接按 Tick 依序弹出执行。
+### 8.2 速度-流场点积适应度函数 (`0x1403342c0`)
+每个模拟步中，提取角色物理瞬时速度 $\vec{v} = (v_x, v_y)$，与所在瓦片的流场目标单位矢量 $\vec{D}_{flow}$ 进行点积，累加到基因个体的 Fitness 中：
+$$\text{Fitness} = \sum_{t=0}^{T} \left( v_x \cdot D_x + v_y \cdot D_y \right) \times 1750.0 - \text{Penalty}_{dist}$$
+- 浮点常量 `0x14054a6b8`：点积权重为 **1750.0f**。
+- 若中途角色进入 Freeze（`m_FreezeTime > 0`），该基因个体立即终止并扣除惩罚分。
 
 ---
 
-## 9. DDNet 工程集成与编译指南
+## 9. Pilot Bot (自主巡航与跟随) 核心参数与状态定义
 
-为使其他 AI 或开发者能够将此 Avoid 系统无缝植入原版 DDNet，请遵循以下工程集成步骤。
+```c
+// 行为模式
+// 0: 自主探索地图 (Autonomous)
+// 1: 跟随鼠标十字准星 (Follow Cursor)
+// 2: 跟随目标玩家 (Follow Player)
+MACRO_CONFIG_INT(KrxAvoidTilePilotBotMode, krx_avoid_tile_pilot_bot_mode, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Pilot Bot behavior mode")
 
-### 9.1 源码目录组织
+// 遗传与前瞻参数
+MACRO_CONFIG_INT(KrxAvoidTilePilotBotPopulationSize, krx_avoid_tile_pilot_bot_population_size, 2048, 128, 8192, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Population size")
+MACRO_CONFIG_INT(KrxAvoidTilePilotBotExplorationDepth, krx_avoid_tile_pilot_bot_exploration_depth, 17, 5, 50, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Simulation ticks per sequence")
+MACRO_CONFIG_INT(KrxAvoidTilePilotBotTopKCandidates, krx_avoid_tile_pilot_bot_top_k_candidates, 10, 1, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Top candidates to validate")
+MACRO_CONFIG_INT(KrxAvoidTilePilotBotSequenceLength, krx_avoid_tile_pilot_bot_sequence_length, 5, 1, 20, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Action ticks used from plan")
+```
+
+---
+
+## 10. DDNet 原版工程集成与输入拦截管道
+
+### 10.1 源码目录组织
 在 `ddnet/src/game/client/components/` 下新建 `avoid/` 子目录：
 ```
 src/game/client/components/avoid/
@@ -631,46 +717,47 @@ src/game/client/components/avoid/
 └── simulation.h             // SimulateCandidate 物理模拟推演核心
 ```
 
-### 9.2 输入管道挂载点 (Hook Integration)
-在 `src/game/client/components/controls.cpp` 的 `CControls::OnMessage` 或输入准备函数中挂载调用：
-
+### 10.2 输入拦截点 (Hook Integration)
+在 `src/game/client/components/controls.cpp` 的 `CControls::OnMessage` 中挂载调用：
 ```cpp
-// 在 controls.cpp 顶部包含
 #include <game/client/components/avoid/avoid.h>
 
-// 在 CControls::OnMessage 中，拷贝输入数据前添加拦截逻辑：
 int CControls::OnMessage(int Msg, void *pRawMsg)
 {
-    // ... 原有输入更新逻辑 ...
+    // ... 原有方向与准星采样逻辑 ...
 
     // [KRX AVOID 模块拦截钩子]
     if(g_Config.m_KrxAvoidFreeze && GameClient()->m_pAvoid)
     {
+        // 传入当前玩家采样的输入结构体指针进行修饰
         GameClient()->m_pAvoid->ProcessInput(&m_aInputData[g_Config.m_ClDummy]);
     }
 
-    // 将最终修饰后的输入复制并发送
+    // 复制修饰后的最终输入并发送网络包
     mem_copy(pData, &m_aInputData[g_Config.m_ClDummy], sizeof(m_aInputData[0]));
     return sizeof(m_aInputData[0]);
 }
 ```
 
-### 9.3 组件注册 (`CGameClient`)
-在 `src/game/client/gameclient.h` 中增加指针变量：
+### 10.3 组件注册 (`CGameClient`)
+在 `src/game/client/gameclient.h` 中添加成员指针：
 ```cpp
-class CBAvoid *m_pAvoid;
+class BLAvoid *m_pAvoid;
 ```
-在 `src/game/client/gameclient.cpp` 中初始化并加入组件列表：
+在 `src/game/client/gameclient.cpp` 中初始化并加入组件树：
 ```cpp
 #include "components/avoid/avoid.h"
 
-// 在 CGameClient 构造函数或组件注册处：
+// 构造函数中：
 m_pAvoid = new BLAvoid();
 m_All.add(m_pAvoid);
 ```
 
-### 9.4 CMake 构建配置更新
-在 `ddnet/CMakeLists.txt` 中添加新源码路径：
+---
+
+## 11. CMake 构建系统配置
+
+在 `ddnet/CMakeLists.txt` 中添加源文件定义：
 ```cmake
 set(CLIENT_AVOID_SRC
     src/game/client/components/avoid/avoid.cpp
@@ -685,15 +772,19 @@ target_sources(DDNet PRIVATE ${CLIENT_AVOID_SRC})
 
 ---
 
-## 10. 验证与测试清单
+## 12. 行为一致性验证与对齐测试清单
 
-完成复现后，可通过以下步骤在 DDNet 客户端控制台（F1）进行功能验证：
+完成复现后，按以下测试用例逐项验证，确保避障表现与 KRX 官方完全相同：
 
-1. **基本启闭测试**：
-   在控制台输入 `bind x toggle krx_avoidfreeze 1 0`，确认按键可切换避障状态。
-2. **Basic 模式验证**：
-   设置 `krx_avoid_agent_type 0`，向冻结池走动，观察角色是否在临近冻结时自动反向回缩。
-3. **Legit MCTS 拟人测试**：
-   设置 `krx_avoid_agent_type 1`，调整 `cl_avoid_num_iterations 100`，观察在复杂障碍物跳跃时，角色移动是否顺滑无突变。
-4. **Blatant 激进测试**：
-   设置 `krx_avoid_agent_type 2`，开启 `krx_avoid_tile_track_points 1` 与 `krx_avoid_tile_blatant_hook 1`，在极端冻结下落场景中确认钩索与方向自动抢救成功率。
+1. **Basic 模式边缘收缩测试**：
+   - 指令：`krx_avoid_agent_type 0; krx_avoidfreeze 1`
+   - 测试：向单一冻结格匀速按住 `D`（向右走）。
+   - **预期表现**：在距离冻结块前恰好 1 个 Tee 宽度的瞬间，水平输入被自动置为 `0` 或 `-1`，角色平稳在边缘悬停，绝不触碰冻结。
+2. **Legit 模式拟人无抖动测试**：
+   - 指令：`krx_avoid_agent_type 1; krx_avoidfreeze 1`（使用默认迭代 100，权重 170/260/160）。
+   - 测试：在安全路段正常起跳和飞行。
+   - **预期表现**：由于高额的 Direction/Hook 拟人保持分，角色操作手感完全如同纯手动操作，毫无机械微抖动；在跳向冻结墙时，角色在最后可救帧平滑反向转向。
+3. **Blatant 模式暴力自救与 NSIF 测试**：
+   - 指令：`krx_avoid_agent_type 2; krx_avoidfreeze 1; krx_avoid_tile_nsif 1`
+   - 测试：从高空向狭长冻结池坠落。
+   - **预期表现**：角色自动组合使用反向移动与空中钩索（若开启了 Hook），并在无法存活全长时顺畅回放历史最佳序列，将存活帧数最大化延展。

@@ -642,12 +642,26 @@ int CGameClient::OnSnapInput(int *pData, bool Dummy, bool Force)
 	if(!Dummy)
 	{
 		int Ret = m_Controls.SnapInput(pData);
+
+		// bestclient: everything downstream reads the sampler buffer, because SnapInput only fills
+		// pData when it decided that a packet is due and one tick's input has to be seen even when
+		// nothing is sent. The buffer is only ever read here, never written.
+		const CNetObj_PlayerInput &Sampled = m_Controls.m_aInputData[g_Config.m_ClDummy];
+
+		// TAS records what the player pressed, so a track stays bit exact during playback (which
+		// runs before Avoid and therefore never sees the agent's edits).
 		if(m_Tas.IsRecordingActive() && !m_FastPractice.Enabled())
-			m_Tas.OnRecordInput(pData, Conn == 1);
-		// bestclient: Avoid runs after TAS so that a recorded track always stays bit exact,
-		// and only ever on the connection the player is actually controlling.
-		if(Ret > 0)
-			m_Avoid.ApplyInput(pData, Ret, Conn == 1);
+			m_Tas.OnRecordInput(reinterpret_cast<const int *>(&Sampled), Conn == 1);
+
+		// Avoid runs after TAS and only on the connection the player is actually controlling. When
+		// it drives, it asks for the packet itself, so the sampler keeps coalescing while the agent
+		// is merely watching.
+		CNetObj_PlayerInput Input = Sampled;
+		if(m_Avoid.ApplyInput(&Input) != CAvoid::INPUT_IDLE)
+		{
+			mem_copy(pData, &Input, sizeof(Input));
+			Ret = sizeof(Input);
+		}
 		// bestclient
 		return Ret;
 	}

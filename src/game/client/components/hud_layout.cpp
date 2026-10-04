@@ -10,6 +10,8 @@
 #include <engine/console.h>
 #include <engine/shared/config.h>
 
+#include <game/localization.h>
+
 // bestclient
 float GetKeystrokesKeyboardPresetWidthHudPx(int Preset);
 // bestclient
@@ -513,7 +515,9 @@ const char *Id(EModule Module)
 
 const char *Name(EModule Module)
 {
-	return Module >= 0 && Module < MODULE_COUNT ? gs_apModuleNames[Module] : "HUD Module";
+	// The module titles are user visible, so they follow the client language like every other
+	// menu label. Untranslated titles simply fall back to their English original.
+	return Module >= 0 && Module < MODULE_COUNT ? BcLocalize(gs_apModuleNames[Module]) : BcLocalize("HUD Module");
 }
 
 EModule ModuleFromId(const char *pId)

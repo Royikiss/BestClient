@@ -27,28 +27,16 @@ namespace
 {
 	constexpr float TILE_SIZE = 32.0f;
 
+	// The HUD module is laid out on the HUD canvas, so every size is relative to that canvas.
 	constexpr float HUD_BASE_WIDTH = 122.0f;
-	constexpr float HUD_BASE_HEIGHT = 60.0f;
+	constexpr float HUD_BASE_HEIGHT = 62.0f;
 	constexpr float HUD_PADDING = 3.0f;
 	constexpr float HUD_HEADER_HEIGHT = 9.0f;
 	constexpr float HUD_ROW_HEIGHT = 7.5f;
 	constexpr float HUD_FONT_HEADER = 5.5f;
 	constexpr float HUD_FONT_ROW = 5.0f;
-	constexpr float HUD_BADGE_WIDTH = 30.0f;
+	constexpr float HUD_BADGE_WIDTH = 34.0f;
 	constexpr float HUD_LABEL_WIDTH = 40.0f;
-
-	ColorRGBA HazardColor(int Flags)
-	{
-		if(Flags & CAvoid::HAZ_DEATH)
-			return ColorRGBA(1.00f, 0.22f, 0.24f, 1.0f);
-		if(Flags & (CAvoid::HAZ_FREEZE | CAvoid::HAZ_DEEP | CAvoid::HAZ_LIVE))
-			return ColorRGBA(0.36f, 0.68f, 1.00f, 1.0f);
-		if(Flags & CAvoid::HAZ_UNFREEZE)
-			return ColorRGBA(0.35f, 1.00f, 0.85f, 1.0f);
-		if(Flags & CAvoid::HAZ_TELE)
-			return ColorRGBA(0.80f, 0.45f, 1.00f, 1.0f);
-		return ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
-	}
 
 	ColorRGBA StateColor(int State)
 	{
@@ -62,17 +50,17 @@ namespace
 		}
 	}
 
+	ColorRGBA PathColor()
+	{
+		return ColorRGBA(0.40f, 0.80f, 1.00f, 0.85f);
+	}
 } // namespace
 
 // ---------------------------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------------------------
 
-CAvoid::CAvoid()
-{
-	for(int i = 0; i < NUM_AGENTS; ++i)
-		m_apAgents[i] = nullptr;
-}
+CAvoid::CAvoid() = default;
 
 CAvoid::~CAvoid()
 {
@@ -85,7 +73,7 @@ CAvoid::~CAvoid()
 
 void CAvoid::OnConsoleInit()
 {
-	Console()->Register("avoid_toggle", "", CFGFLAG_CLIENT, ConAvoidToggle, this, "Arm or disarm the selected Avoid agent");
+	Console()->Register("avoid_toggle", "", CFGFLAG_CLIENT, ConAvoidToggle, this, "Toggle the Avoid Gores bot (same as bc_avoid_enabled)");
 	Console()->Register("avoid_status", "", CFGFLAG_CLIENT, ConAvoidStatus, this, "Print the current Avoid state to the console");
 	Console()->Register("avoid_reset", "", CFGFLAG_CLIENT, ConAvoidReset, this, "Reset the Avoid telemetry counters");
 }
@@ -102,33 +90,35 @@ void CAvoid::OnInit()
 void CAvoid::OnReset()
 {
 	m_Telemetry = STelemetry{};
-	m_LastThreat = SThreat{};
-	m_LastPlan = SInputPlan{};
+	m_vLastPath.clear();
 	m_LastDecisionTick = -1;
-	m_LastInputTick = -1;
 	m_IdleTicks = 0;
-	for(int i = 0; i < NUM_AGENTS; ++i)
+	m_DroveTick = -1;
+	m_YieldTick = -1;
+	for(Avoid::BLAgent *pAgent : m_apAgents)
 	{
-		if(m_apAgents[i])
-			m_apAgents[i]->OnReset();
+		if(pAgent)
+			pAgent->OnReset();
 	}
 }
 
 void CAvoid::OnMapLoad()
 {
-	m_LastThreat = SThreat{};
-	m_LastPlan = SInputPlan{};
+	m_Telemetry = STelemetry{};
+	m_vLastPath.clear();
 	m_LastDecisionTick = -1;
 	m_IdleTicks = 0;
-	for(int i = 0; i < NUM_AGENTS; ++i)
+	m_DroveTick = -1;
+	m_YieldTick = -1;
+	for(Avoid::BLAgent *pAgent : m_apAgents)
 	{
-		if(m_apAgents[i])
-			m_apAgents[i]->OnReset();
+		if(pAgent)
+			pAgent->OnReset();
 	}
 }
 
 // ---------------------------------------------------------------------------------------------
-// Configuration helpers
+// Configuration
 // ---------------------------------------------------------------------------------------------
 
 int CAvoid::Agent() const
@@ -136,7 +126,7 @@ int CAvoid::Agent() const
 	return std::clamp(g_Config.m_BcAvoidAgent, 0, (int)NUM_AGENTS - 1);
 }
 
-const char *CAvoid::AgentName(int Agent) const
+const char *CAvoid::AgentName(int Agent)
 {
 	switch(Agent)
 	{
@@ -151,33 +141,41 @@ const char *CAvoid::AgentName(int Agent) const
 
 void CAvoid::SetAgent(int Agent)
 {
+	const int Previous = this->Agent();
 	g_Config.m_BcAvoidAgent = std::clamp(Agent, 0, (int)NUM_AGENTS - 1);
-	m_LastPlan = SInputPlan{};
+	m_vLastPath.clear();
 	m_LastDecisionTick = -1;
+	m_LastOverrideActive = false;
+	// Both sides are reset: the new agent must not inherit anything, and the old one releases the
+	// navigable grid it built, which is the largest allocation of the whole module.
+	for(const int Index : {Previous, this->Agent()})
+	{
+		if(Index >= 0 && Index < NUM_AGENTS && m_apAgents[Index])
+			m_apAgents[Index]->OnReset();
+	}
 }
 
-bool CAvoid::IsArmed() const
+bool CAvoid::IsEnabled() const
 {
-	return g_Config.m_BcAvoidEnabled && g_Config.m_BcAvoidActive;
+	return g_Config.m_BcAvoidEnabled != 0;
 }
 
-bool CAvoid::WantsEveryTickInput() const
+void CAvoid::SetEnabled(bool Enabled)
 {
-	return IsArmed();
-}
-
-void CAvoid::SetArmed(bool Armed)
-{
-	g_Config.m_BcAvoidActive = Armed ? 1 : 0;
+	g_Config.m_BcAvoidEnabled = Enabled ? 1 : 0;
 	m_IdleTicks = 0;
 	m_LastDecisionTick = -1;
-	m_LastPlan = SInputPlan{};
-	m_Telemetry.m_State = STATE_OFF;
+	m_vLastPath.clear();
+	m_LastOverrideActive = false;
+	// m_DroveTick / m_YieldTick are deliberately kept: if the agent was driving, the next tick has
+	// to hand the player's own input back with a packet, and the consecutive-tick test in
+	// FinishInput() makes a stale value harmless otherwise.
+	m_Telemetry.m_State = Enabled ? STATE_WATCHING : STATE_OFF;
 }
 
-void CAvoid::ToggleArmed()
+void CAvoid::ToggleEnabled()
 {
-	SetArmed(!IsArmed());
+	SetEnabled(!IsEnabled());
 }
 
 void CAvoid::ResetCounters()
@@ -185,131 +183,100 @@ void CAvoid::ResetCounters()
 	m_Telemetry.m_Decisions = 0;
 	m_Telemetry.m_Overrides = 0;
 	m_Telemetry.m_NsifFallbacks = 0;
-	m_LastDecisionTick = -1;
-	GameClient()->Echo("Avoid counters reset.");
+	GameClient()->Echo(BcLocalize("Avoid: counters reset"));
 }
 
 void CAvoid::PrintStatus() const
 {
 	char aBuf[256];
-	str_format(aBuf, sizeof(aBuf), "[Avoid] state: %s | agent: %s | armed: %s | threat: %s %.2f tiles | sensed: %d tiles (%d hazards) | safe: %d ticks | decisions: %d | overrides: %d | cost: %.3f ms",
-		StateName(m_Telemetry.m_State), AgentName(m_Telemetry.m_Agent), m_Telemetry.m_Armed ? "yes" : "no",
-		HazardName(m_Telemetry.m_ThreatFlags), m_Telemetry.m_ThreatDistanceTiles, m_Telemetry.m_SensedTiles,
-		m_Telemetry.m_HazardTiles, m_Telemetry.m_SafeTicks, m_Telemetry.m_Decisions,
-		m_Telemetry.m_Overrides, m_Telemetry.m_CostMs);
+	str_format(aBuf, sizeof(aBuf), "[avoid] state %s | agent %s | enabled %s | safe %d ticks | cost %.3f ms | decisions %d | overrides %d | nsif %d",
+		StateName(m_Telemetry.m_State), AgentName(m_Telemetry.m_Agent), m_Telemetry.m_Enabled ? "yes" : "no",
+		m_Telemetry.m_SurvivalTicks, m_Telemetry.m_CostMs, m_Telemetry.m_Decisions,
+		m_Telemetry.m_Overrides, m_Telemetry.m_NsifFallbacks);
 	GameClient()->Echo(aBuf);
 
-	str_format(aBuf, sizeof(aBuf), "[Avoid] last plan: %s", m_Telemetry.m_aReason[0] ? m_Telemetry.m_aReason : "<none>");
+	str_format(aBuf, sizeof(aBuf), "[avoid] last plan: %s", m_Telemetry.m_aReason[0] ? m_Telemetry.m_aReason : "<none>");
 	GameClient()->Echo(aBuf);
-
-	if(g_Config.m_BcAvoidKickInTicks >= g_Config.m_BcAvoidCheckTicks)
-		GameClient()->Echo(BcLocalize("warning: kick in ticks is not below check ticks, the agent will react late"));
-}
-
-CAvoid::SSettings CAvoid::ReadSettings() const
-{
-	SSettings S;
-	S.m_Agent = Agent();
-	S.m_DirectionAssist = g_Config.m_BcAvoidDirectionAssist != 0;
-	S.m_HookAssist = g_Config.m_BcAvoidHookAssist != 0;
-	S.m_CheckTicks = std::clamp(g_Config.m_BcAvoidCheckTicks, 2, 50);
-	S.m_KickInTicks = std::clamp(g_Config.m_BcAvoidKickInTicks, 0, 50);
-	S.m_Quality = std::clamp(g_Config.m_BcAvoidQuality, 1, 200);
-	S.m_Randomness = std::clamp(g_Config.m_BcAvoidRandomness, 0, 200);
-	S.m_DirectionWeight = std::clamp(g_Config.m_BcAvoidDirectionWeight, 0, 200);
-	S.m_HookWeight = std::clamp(g_Config.m_BcAvoidHookWeight, 0, 200);
-	S.m_LifeWeight = std::clamp(g_Config.m_BcAvoidLifeWeight, 0, 200);
-	S.m_TileDeath = g_Config.m_BcAvoidTileDeath != 0;
-	S.m_TileFreeze = g_Config.m_BcAvoidTileFreeze != 0;
-	S.m_TileUnfreeze = g_Config.m_BcAvoidTileUnfreeze != 0;
-	S.m_UnfreezeTicks = std::clamp(g_Config.m_BcAvoidUnfreezeTicks, 2, 50);
-	S.m_TileTele = g_Config.m_BcAvoidTileTele != 0;
-	S.m_PlayerPrediction = g_Config.m_BcAvoidPlayerPrediction != 0;
-	S.m_Nsif = g_Config.m_BcAvoidNsif != 0;
-	S.m_AfkProtect = g_Config.m_BcAvoidAfkProtect != 0;
-	S.m_AfkTime = std::clamp(g_Config.m_BcAvoidAfkTime, 5, 600);
-	S.m_TrackPoint = g_Config.m_BcAvoidTrackPoint != 0;
-	S.m_SafeAimTracking = g_Config.m_BcAvoidSafeAimTracking != 0;
-	S.m_AutoDrag = g_Config.m_BcAvoidAutoDrag != 0;
-	S.m_Aimbot = g_Config.m_BcAvoidAimbot != 0;
-	S.m_AimbotMode = std::clamp(g_Config.m_BcAvoidAimbotMode, 0, 1);
-	S.m_AimbotSegments = std::clamp(g_Config.m_BcAvoidAimbotSegments, 4, 128);
-	S.m_AimbotFov = std::clamp(g_Config.m_BcAvoidAimbotFov, 10, 180);
-	S.m_SensingGate = false;
-	S.m_SensingRadius = (float)std::clamp(g_Config.m_BcAvoidSensingRadius, 1, 32) * 0.5f;
-	return S;
 }
 
 const char *CAvoid::StateName(int State)
 {
 	switch(State)
 	{
-	case STATE_OFF: return "OFF";
-	case STATE_WATCHING: return "WATCH";
-	case STATE_ASSISTING: return "ASSIST";
-	case STATE_NSIF: return "NSIF";
-	case STATE_AFK: return "AFK";
-	default: return "OFF";
+	case STATE_OFF: return BcLocalize("OFF");
+	case STATE_WATCHING: return BcLocalize("WATCH");
+	case STATE_ASSISTING: return BcLocalize("ASSIST");
+	case STATE_NSIF: return BcLocalize("NSIF");
+	case STATE_AFK: return BcLocalize("AFK");
+	default: return BcLocalize("OFF");
 	}
 }
 
-const char *CAvoid::HazardName(int Flags)
+CAvoid::SSettings CAvoid::ReadSettings() const
 {
-	if(Flags & HAZ_DEATH)
-		return "DEATH";
-	if(Flags & HAZ_DEEP)
-		return "DEEP FREEZE";
-	if(Flags & HAZ_LIVE)
-		return "LIVE FREEZE";
-	if(Flags & HAZ_FREEZE)
-		return "FREEZE";
-	if(Flags & HAZ_UNFREEZE)
-		return "UNFREEZE";
-	if(Flags & HAZ_TELE)
-		return "TELEPORT";
-	if(Flags & HAZ_SELF)
-		return "FROZEN";
-	return "CLEAR";
-}
+	SSettings S;
+	S.m_Agent = Agent();
+	S.m_AfkProtection = g_Config.m_BcAvoidAfkProtection != 0;
+	S.m_AfkTime = std::clamp(g_Config.m_BcAvoidAfkTime, 5, 300);
+	S.m_PlayerPrediction = g_Config.m_BcAvoidPlayerPrediction != 0;
+	S.m_DrawPath = g_Config.m_BcAvoidDrawPath != 0;
 
-// ---------------------------------------------------------------------------------------------
-// Sensing layer
-// ---------------------------------------------------------------------------------------------
+	S.m_LegitDirectionWeight = std::clamp(g_Config.m_BcAvoidLegitDirectionWeight, 1, 1000);
+	S.m_LegitLifespanWeight = std::clamp(g_Config.m_BcAvoidLegitLifespanWeight, 1, 1000);
+	S.m_LegitHookWeight = std::clamp(g_Config.m_BcAvoidLegitHookWeight, 1, 1000);
+	S.m_LegitExploration = std::clamp(g_Config.m_BcAvoidLegitExploration, 1, 1000);
+	S.m_LegitIterations = std::clamp(g_Config.m_BcAvoidLegitIterations, 1, 1000);
+	S.m_LegitCheckTicks = std::clamp(g_Config.m_BcAvoidLegitCheckTicks, 1, 50);
+	S.m_LegitDirection = g_Config.m_BcAvoidLegitDirection != 0;
+	S.m_LegitHook = g_Config.m_BcAvoidLegitHook != 0;
+	S.m_LegitTeles = g_Config.m_BcAvoidLegitTeles != 0;
+	S.m_LegitDeath = g_Config.m_BcAvoidLegitDeath != 0;
+	S.m_LegitUnfreeze = g_Config.m_BcAvoidLegitUnfreeze != 0;
+	S.m_LegitUnfreezeTicks = std::clamp(g_Config.m_BcAvoidLegitUnfreezeTicks, 1, 30);
 
-int CAvoid::ClassifyTile(int Tile) const
-{
-	return Avoid::ClassifyTile(Tile);
-}
+	S.m_BlatantCheckTicks = std::clamp(g_Config.m_BcAvoidBlatantCheckTicks, 1, 50);
+	S.m_KickInTicks = std::clamp(g_Config.m_BcAvoidKickInTicks, 1, 50);
+	S.m_BlatantDirection = g_Config.m_BcAvoidBlatantDirection != 0;
+	S.m_BlatantHook = g_Config.m_BcAvoidBlatantHook != 0;
+	S.m_BlatantTeles = g_Config.m_BcAvoidBlatantTeles != 0;
+	S.m_BlatantDeath = g_Config.m_BcAvoidBlatantDeath != 0;
+	S.m_BlatantUnfreeze = g_Config.m_BcAvoidBlatantUnfreeze != 0;
+	S.m_BlatantUnfreezeTicks = std::clamp(g_Config.m_BcAvoidBlatantUnfreezeTicks, 0, 30);
+	S.m_Nsif = g_Config.m_BcAvoidNsif != 0;
+	S.m_TrackPoint = g_Config.m_BcAvoidTrackPoint != 0;
+	S.m_SafeAimTracking = g_Config.m_BcAvoidSafeAimTracking != 0;
+	S.m_AutoDrag = g_Config.m_BcAvoidAutoDrag != 0;
+	S.m_Aimbot = g_Config.m_BcAvoidAimbot != 0;
+	S.m_AimbotFov = std::clamp(g_Config.m_BcAvoidAimbotFov, 10, 360);
+	S.m_AimbotSegments = std::clamp(g_Config.m_BcAvoidAimbotSegments, 1, 64);
+	S.m_AutoAim = g_Config.m_BcAvoidAutoAim != 0;
+	S.m_AimAssist = g_Config.m_BcAvoidAimAssist != 0;
 
-int CAvoid::HazardMaskFromSettings() const
-{
-	return Avoid::HazardMask(m_Settings);
-}
+	S.m_FentQuality = std::clamp(g_Config.m_BcAvoidFentQuality, 0, 2);
+	S.m_FentAdvanced = g_Config.m_BcAvoidFentAdvanced != 0;
+	S.m_FentTicks = std::clamp(g_Config.m_BcAvoidFentTicks, 1000, 10000);
+	S.m_FentTweakerActions = std::clamp(g_Config.m_BcAvoidFentTweakerActions, 50, 5000);
+	S.m_FentTweakerTicks = std::clamp(g_Config.m_BcAvoidFentTweakerTicks, 1, 30);
+	S.m_FentTweakerDosage = std::clamp(g_Config.m_BcAvoidFentTweakerDosage, 1, 500);
+	S.m_FentLightTile = g_Config.m_BcAvoidFentLightTile != 0;
+	S.m_FentLightTileRadius = std::clamp(g_Config.m_BcAvoidFentLightTileRadius, 0, 20);
 
-bool CAvoid::IsRelevantHazard(int Flags) const
-{
-	return Avoid::IsRelevantHazard(m_Settings, Flags);
-}
+	S.m_PilotMode = std::clamp(g_Config.m_BcAvoidPilotMode, 0, 2);
+	S.m_PilotPopulation = std::clamp(g_Config.m_BcAvoidPilotPopulation, 128, 8192);
+	S.m_PilotDepth = std::clamp(g_Config.m_BcAvoidPilotDepth, 5, 50);
+	S.m_PilotTopK = std::clamp(g_Config.m_BcAvoidPilotTopK, 1, 100);
+	S.m_PilotSequence = std::clamp(g_Config.m_BcAvoidPilotSequence, 1, 20);
 
-int CAvoid::ClassifyPoint(vec2 Pos) const
-{
-	return Avoid::ClassifyPoint(Collision(), Pos);
-}
-
-CAvoid::SThreat CAvoid::ScanThreat(const CCharacterCore &Core) const
-{
-	return Avoid::ScanThreat(Collision(), m_Settings, Core);
+	Avoid::ResolveFentPreset(S);
+	return S;
 }
 
 // ---------------------------------------------------------------------------------------------
 // Input pipeline
 // ---------------------------------------------------------------------------------------------
 
-const CCharacterCore *CAvoid::ActiveCore(int *pClientId, bool *pIsDummy) const
+const CCharacterCore *CAvoid::ActiveCore(int *pClientId) const
 {
-	if(pIsDummy)
-		*pIsDummy = g_Config.m_ClDummy != 0;
-
 	if(GameClient()->m_FastPractice.Active())
 	{
 		int LocalId = -1;
@@ -325,7 +292,7 @@ const CCharacterCore *CAvoid::ActiveCore(int *pClientId, bool *pIsDummy) const
 		}
 	}
 
-	const int ClientId = GameClient()->m_aLocalIds[g_Config.m_ClDummy];
+	const int ClientId = GameClient()->m_Snap.m_LocalClientId;
 	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
 		return nullptr;
 	if(!GameClient()->m_aClients[ClientId].m_Active)
@@ -336,19 +303,7 @@ const CCharacterCore *CAvoid::ActiveCore(int *pClientId, bool *pIsDummy) const
 	return &GameClient()->m_aClients[ClientId].m_Predicted;
 }
 
-vec2 CAvoid::OverlayAnchor(const CCharacterCore &Core) const
-{
-	const int LocalId = GameClient()->m_aLocalIds[g_Config.m_ClDummy];
-	if(LocalId >= 0 && LocalId < MAX_CLIENTS && GameClient()->m_aClients[LocalId].m_Active)
-	{
-		const vec2 RenderPos = GameClient()->m_LocalCharacterPos;
-		if(distance(RenderPos, Core.m_Pos) <= 128.0f)
-			return RenderPos;
-	}
-	return Core.m_Pos;
-}
-
-void CAvoid::CheckAfkProtection(const SContext &Ctx)
+void CAvoid::CheckAfkProtection(const SSettings &Set, const Avoid::SContext &Ctx)
 {
 	const bool ActiveInput = Ctx.m_Input.m_Direction != 0 || Ctx.m_Input.m_Jump != 0 ||
 				 Ctx.m_Input.m_Hook != 0 || (Ctx.m_Input.m_Fire & 1) != 0;
@@ -357,155 +312,149 @@ void CAvoid::CheckAfkProtection(const SContext &Ctx)
 	else if(m_IdleTicks < 50 * 600)
 		m_IdleTicks++;
 
-	if(!m_Settings.m_AfkProtect || !IsArmed())
+	if(!Set.m_AfkProtection || !IsEnabled())
 		return;
 
-	if(m_IdleTicks >= 50 * m_Settings.m_AfkTime)
+	if(m_IdleTicks >= 50 * Set.m_AfkTime)
 	{
-		SetArmed(false);
+		SetEnabled(false);
 		m_Telemetry.m_State = STATE_AFK;
-		str_copy(m_Telemetry.m_aReason, "AFK protection disarmed the agent");
-		if(g_Config.m_BcAvoidLog)
-			Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "avoid", "AFK protection disarmed the agent.");
+		str_copy(m_Telemetry.m_aReason, "AFK protection disabled the bot");
+		GameClient()->Echo(BcLocalize("Avoid: AFK protection disabled the bot"));
 	}
 }
 
-void CAvoid::ApplyInput(int *pData, int Size, bool Dummy)
+CAvoid::EInputResult CAvoid::FinishInput(bool Drives, CNetObj_PlayerInput *pInput, int Tick)
 {
-	if(!pData || Size < (int)sizeof(CNetObj_PlayerInput))
-		return;
+	if(Drives)
+	{
+		m_DroveTick = Tick;
+		m_YieldTick = -1;
+		*pInput = m_LastOverride;
+		return INPUT_DRIVEN;
+	}
 
-	m_Settings = ReadSettings();
+	// The tick right after the agent stopped driving still has to put the player's own input on
+	// the wire, because the sampler compared its raw state against its own raw state and therefore
+	// has no idea that anything changed. Remembering the tick keeps that true for a re-send of the
+	// same tick.
+	if(m_DroveTick >= 0 && Tick == m_DroveTick + 1)
+		m_YieldTick = Tick;
+	m_DroveTick = -1;
+	return m_YieldTick == Tick ? INPUT_YIELDED : INPUT_IDLE;
+}
 
-	SContext Ctx;
+CAvoid::EInputResult CAvoid::ApplyInput(CNetObj_PlayerInput *pInput)
+{
+	if(!pInput)
+		return INPUT_IDLE;
+
+	Avoid::SContext Ctx;
 	Ctx.m_Tick = Client()->PredGameTick(g_Config.m_ClDummy);
-	Ctx.m_Dummy = Dummy;
-	Ctx.m_Settings = m_Settings;
-	mem_copy(&Ctx.m_Input, pData, sizeof(CNetObj_PlayerInput));
+	Ctx.m_Settings = ReadSettings();
+	Ctx.m_Input = *pInput;
 
-	const CCharacterCore *pCore = ActiveCore(&Ctx.m_ClientId, &Ctx.m_Dummy);
-	if(!pCore)
+	if(!ActiveCore(&Ctx.m_LocalClientId))
 	{
 		m_Telemetry.m_State = STATE_OFF;
-		m_Telemetry.m_Armed = IsArmed();
+		m_Telemetry.m_Enabled = IsEnabled();
 		m_Telemetry.m_Agent = Agent();
-		m_Telemetry.m_ThreatFlags = HAZ_NONE;
-		m_Telemetry.m_ThreatDistanceTiles = -1.0f;
-		m_Telemetry.m_SensedTiles = 0;
-		m_Telemetry.m_HazardTiles = 0;
-		return;
+		m_LastOverrideActive = false;
+		return FinishInput(false, pInput, Ctx.m_Tick);
 	}
 
-	Ctx.m_Core = *pCore;
-	Ctx.m_Threat = ScanThreat(Ctx.m_Core);
-	m_LastThreat = Ctx.m_Threat;
-
-	if(!g_Config.m_BcAvoidEnabled)
+	if(!IsEnabled())
 	{
-		m_LastPlan = SInputPlan{};
-		UpdateTelemetry(Ctx, m_LastPlan);
-		return;
+		m_Telemetry.m_State = STATE_OFF;
+		m_Telemetry.m_Enabled = false;
+		m_Telemetry.m_Agent = Agent();
+		m_Telemetry.m_SurvivalTicks = 0;
+		m_Telemetry.m_CostMs = 0.0f;
+		m_vLastPath.clear();
+		m_LastOverrideActive = false;
+		return FinishInput(false, pInput, Ctx.m_Tick);
 	}
 
-	CheckAfkProtection(Ctx);
+	CheckAfkProtection(Ctx.m_Settings, Ctx);
+	if(!IsEnabled())
+	{
+		// AFK protection just fired: it has to take effect on this very tick, otherwise the bot
+		// would keep steering after it announced that it stopped.
+		m_Telemetry.m_Enabled = false;
+		m_Telemetry.m_Agent = Agent();
+		m_Telemetry.m_SurvivalTicks = 0;
+		m_Telemetry.m_CostMs = 0.0f;
+		m_vLastPath.clear();
+		m_LastOverrideActive = false;
+		return FinishInput(false, pInput, Ctx.m_Tick);
+	}
 
-	SInputPlan Plan = m_LastPlan;
-	if(IsArmed() && Ctx.m_Tick != m_LastDecisionTick)
+	// One decision per game tick. The client can ask for the same tick twice when it has to
+	// re-send, so the decision is remembered and replayed instead of being recalculated (which
+	// would advance the agents' search state twice for one tick).
+	if(Ctx.m_Tick != m_LastDecisionTick)
 	{
 		m_LastDecisionTick = Ctx.m_Tick;
+
+		Avoid::AvoidInput Action;
+		Action.m_Input = Ctx.m_Input;
 		const int64_t StartTime = time_get();
 
-		if(g_Config.m_BcAvoidDebugOverride)
+		const int AgentId = Agent();
+		Avoid::BLAgent *pAgent = (AgentId >= 0 && AgentId < NUM_AGENTS) ? m_apAgents[AgentId] : nullptr;
+		if(pAgent)
 		{
-			Plan.m_Override = true;
-			Plan.m_UsedFallback = false;
-			Plan.m_Input = Ctx.m_Input;
-			Plan.m_Input.m_Direction = -Ctx.m_Input.m_Direction;
-			Plan.m_SafeTicks = 0;
-			Plan.m_CostMs = 0.0f;
-			str_copy(Plan.m_aReason, BcLocalize("debug override (input pipeline self-test)"));
+			Action = pAgent->GetAction(Ctx, Avoid::GetActiveWorld(GameClient()));
 		}
 		else
 		{
-			Avoid::BLAgent *pAgent = (Agent() >= 0 && Agent() < NUM_AGENTS) ? m_apAgents[Agent()] : nullptr;
-			Avoid::AvoidInput Action{};
-			if(pAgent)
-				Action = pAgent->GetAction(&Ctx.m_Input);
-
-			const float CostMs = (float)((time_get() - StartTime) * 1000.0 / (double)time_freq());
-
-			Plan.m_Override = (Action.m_Active != 0);
-			Plan.m_UsedFallback = Action.m_UsedFallback;
-			Plan.m_Input = Action.m_Input;
-			Plan.m_SafeTicks = Action.m_SurvivalTicks;
-			Plan.m_CostMs = CostMs;
-			str_copy(Plan.m_aReason, Action.m_aReason);
+			str_copy(Action.m_aReason, "agent unavailable");
 		}
 
-		m_LastPlan = Plan;
-		m_Telemetry.m_Decisions++;
-		if(Plan.m_Override)
-			m_Telemetry.m_Overrides++;
-		if(Plan.m_UsedFallback)
-			m_Telemetry.m_NsifFallbacks++;
+		const float CostMs = (float)((double)(time_get() - StartTime) * 1000.0 / (double)time_freq());
 
-		if(g_Config.m_BcAvoidLog)
+		m_LastOverrideActive = Action.m_Active != 0;
+		m_LastOverride = Action.m_Input;
+		if(Action.m_Active)
 		{
-			char aBuf[320];
-			str_format(aBuf, sizeof(aBuf), "[avoid] tick %d  agent %s  override %s  safe %d  cost %.3f ms  reason %s",
-				Ctx.m_Tick, AgentName(Agent()), Plan.m_Override ? "yes" : "no", Plan.m_SafeTicks, Plan.m_CostMs, Plan.m_aReason);
-			Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "avoid", aBuf);
+			m_Telemetry.m_Overrides++;
+			if(Action.m_UsedFallback)
+				m_Telemetry.m_NsifFallbacks++;
 		}
-	}
-	else if(!IsArmed())
-	{
-		m_LastPlan = SInputPlan{};
-		Plan = m_LastPlan;
+		m_Telemetry.m_Decisions++;
+
+		m_vLastPath = Action.m_vPath;
+		UpdateTelemetry(Action, CostMs);
 	}
 
-	if(Plan.m_Override)
-	{
-		mem_copy(pData, &Plan.m_Input, sizeof(CNetObj_PlayerInput));
-	}
-
-	UpdateTelemetry(Ctx, Plan);
+	return FinishInput(m_LastOverrideActive, pInput, Ctx.m_Tick);
 }
 
-void CAvoid::UpdateTelemetry(const SContext &Ctx, const SInputPlan &Plan)
+void CAvoid::UpdateTelemetry(const Avoid::AvoidInput &Action, float CostMs)
 {
-	m_Telemetry.m_Armed = IsArmed();
+	m_Telemetry.m_Enabled = IsEnabled();
 	m_Telemetry.m_Agent = Agent();
-	m_Telemetry.m_ThreatFlags = Ctx.m_Threat.m_Flags;
-	m_Telemetry.m_ThreatDistanceTiles = Ctx.m_Threat.m_HasNearest ? Ctx.m_Threat.m_NearestDistPx / TILE_SIZE : -1.0f;
-	m_Telemetry.m_ThreatPos = Ctx.m_Threat.m_NearestPos;
-	m_Telemetry.m_SensedTiles = Ctx.m_Threat.m_SensedTiles;
-	m_Telemetry.m_HazardTiles = Ctx.m_Threat.m_HazardTiles;
-	m_Telemetry.m_PlayerPos = Ctx.m_Core.m_Pos;
-	m_Telemetry.m_PlayerVel = Ctx.m_Core.m_Vel;
-	m_Telemetry.m_SafeTicks = Plan.m_SafeTicks;
-	m_Telemetry.m_Candidates = Plan.m_Candidates;
-	m_Telemetry.m_CostMs = Plan.m_CostMs;
-	m_Telemetry.m_AimChanged = Plan.m_Override &&
-				   (Plan.m_Input.m_TargetX != Ctx.m_Input.m_TargetX ||
-				    Plan.m_Input.m_TargetY != Ctx.m_Input.m_TargetY);
-	m_Telemetry.m_AimTargetX = Plan.m_Input.m_TargetX;
-	m_Telemetry.m_AimTargetY = Plan.m_Input.m_TargetY;
-	str_copy(m_Telemetry.m_aReason, Plan.m_aReason);
+	m_Telemetry.m_SurvivalTicks = Action.m_SurvivalTicks;
+	m_Telemetry.m_CostMs = CostMs;
+	m_Telemetry.m_TrackPoint = Action.m_TrackPoint;
+	m_Telemetry.m_AimTarget = Action.m_AimTarget;
+	const int AgentId = Agent();
+	m_Telemetry.m_NavigatorReady = (AgentId >= 0 && AgentId < NUM_AGENTS && m_apAgents[AgentId]) ?
+					       m_apAgents[AgentId]->NavigatorReady() :
+					       false;
+	str_copy(m_Telemetry.m_aReason, Action.m_aReason);
 
-	if(!g_Config.m_BcAvoidEnabled)
+	if(!IsEnabled())
 	{
-		m_Telemetry.m_State = STATE_OFF;
+		m_Telemetry.m_State = m_Telemetry.m_State == STATE_AFK ? STATE_AFK : STATE_OFF;
 		return;
 	}
-	if(!IsArmed())
+	if(!Action.m_Active)
 	{
-		m_Telemetry.m_State = (m_Telemetry.m_State == STATE_AFK) ? STATE_AFK : STATE_OFF;
-		return;
-	}
-	if(Plan.m_Override)
-		m_Telemetry.m_State = Plan.m_UsedFallback ? STATE_NSIF : STATE_ASSISTING;
-	else
 		m_Telemetry.m_State = STATE_WATCHING;
+		return;
+	}
+	m_Telemetry.m_State = Action.m_UsedFallback ? STATE_NSIF : STATE_ASSISTING;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -516,20 +465,18 @@ void CAvoid::OnRender()
 {
 	if(Client()->State() != IClient::STATE_ONLINE)
 		return;
-	if(!g_Config.m_BcAvoidEnabled)
-		return;
-	if(GameClient()->m_Snap.m_SpecInfo.m_Active && GameClient()->m_aLocalIds[g_Config.m_ClDummy] < 0)
+	if(GameClient()->m_Snap.m_SpecInfo.m_Active && GameClient()->m_Snap.m_LocalClientId < 0)
 		return;
 
-	if(Agent() >= 0 && Agent() < NUM_AGENTS && m_apAgents[Agent()])
-		m_apAgents[Agent()]->OnRender();
+	const int AgentId = Agent();
+	if(AgentId >= 0 && AgentId < NUM_AGENTS && m_apAgents[AgentId])
+		m_apAgents[AgentId]->OnRender();
 
-	if(g_Config.m_BcAvoidShowVisuals)
+	if(IsEnabled() && (g_Config.m_BcAvoidDrawPath || g_Config.m_BcAvoidDrawTrackPoint || g_Config.m_BcAvoidDrawAimbot))
 	{
-		int ClientId = -1;
-		bool IsDummy = false;
-		if(const CCharacterCore *pCore = ActiveCore(&ClientId, &IsDummy))
-			RenderWorldOverlay(*pCore, m_LastThreat);
+		const CCharacterCore *pCore = ActiveCore(nullptr);
+		if(pCore)
+			RenderWorldOverlay(*pCore);
 	}
 
 	if(IsHudVisible())
@@ -538,7 +485,7 @@ void CAvoid::OnRender()
 
 bool CAvoid::IsHudVisible() const
 {
-	return g_Config.m_BcAvoidShowHud != 0 && HudLayout::IsEnabled(HudLayout::MODULE_AVOID);
+	return HudLayout::IsEnabled(HudLayout::MODULE_AVOID);
 }
 
 CUIRect CAvoid::GetHudRect(bool ForcePreview) const
@@ -600,7 +547,9 @@ void CAvoid::RenderHudModule(bool ForcePreview)
 	const float Alpha = std::clamp(Layout.m_Alpha / 100.0f, 0.05f, 1.0f);
 
 	CUIRect Canvas = Screen;
-	Canvas.Draw(ColorRGBA(0.06f, 0.08f, 0.12f, 0.85f * Alpha), IGraphics::CORNER_ALL, 4.0f * Scale);
+	// The panel background is a normal HUD module setting, so it follows the HUD editor.
+	if(Layout.m_BackgroundEnabled)
+		Canvas.Draw(ColorRGBA(0.06f, 0.08f, 0.12f, 0.85f * Alpha), IGraphics::CORNER_ALL, 4.0f * Scale);
 
 	CUIRect Header, Content;
 	Canvas.Margin(HUD_PADDING * Scale, &Content);
@@ -610,14 +559,14 @@ void CAvoid::RenderHudModule(bool ForcePreview)
 	Header.VSplitRight(HUD_BADGE_WIDTH * Scale, &TitleRect, &Badge);
 
 	TextRender()->TextColor(1.0f, 1.0f, 1.0f, Alpha);
-	char aTitle[48];
+	char aTitle[64];
 	str_format(aTitle, sizeof(aTitle), "AVOID: %s", AgentName(ForcePreview ? AGENT_BASIC : m_Telemetry.m_Agent));
 	Ui()->DoLabel(&TitleRect, aTitle, HUD_FONT_HEADER * Scale, TEXTALIGN_ML);
 
 	const int State = ForcePreview ? STATE_WATCHING : m_Telemetry.m_State;
-	ColorRGBA BCol = StateColor(State);
-	BCol.a *= Alpha;
-	Badge.Draw(BCol, IGraphics::CORNER_ALL, 2.0f * Scale);
+	ColorRGBA BadgeCol = StateColor(State);
+	BadgeCol.a *= Alpha;
+	Badge.Draw(BadgeCol, IGraphics::CORNER_ALL, 2.0f * Scale);
 	TextRender()->TextColor(0.05f, 0.05f, 0.08f, Alpha);
 	Ui()->DoLabel(&Badge, StateName(State), HUD_FONT_HEADER * Scale, TEXTALIGN_MC);
 
@@ -632,45 +581,40 @@ void CAvoid::RenderHudModule(bool ForcePreview)
 		Ui()->DoLabel(&ValArea, pValue, HUD_FONT_ROW * Scale, TEXTALIGN_ML);
 	};
 
-	char aThreatBuf[48];
+	char aBuf[64];
 	if(ForcePreview)
-		str_copy(aThreatBuf, "CLEAR (6.0 t)");
-	else if(m_Telemetry.m_ThreatDistanceTiles >= 0.0f)
-		str_format(aThreatBuf, sizeof(aThreatBuf), "%s (%.1f t)", HazardName(m_Telemetry.m_ThreatFlags), m_Telemetry.m_ThreatDistanceTiles);
+		str_copy(aBuf, BcLocalize("player input safe"));
 	else
-		str_copy(aThreatBuf, "CLEAR");
-	DrawRow(Content, BcLocalize("Threat:"), aThreatBuf, HazardColor(ForcePreview ? HAZ_NONE : m_Telemetry.m_ThreatFlags));
+		str_copy(aBuf, m_Telemetry.m_aReason[0] ? m_Telemetry.m_aReason : "<none>");
+	DrawRow(Content, BcLocalize("Plan:"), aBuf, ColorRGBA(0.95f, 0.85f, 0.45f, 1.0f));
 
-	char aSafeBuf[48];
 	if(ForcePreview)
-		str_copy(aSafeBuf, "26 tick (9999)");
+		str_copy(aBuf, "26 tick");
 	else
-		str_format(aSafeBuf, sizeof(aSafeBuf), "%d tick (%.2f ms)", m_Telemetry.m_SafeTicks, m_Telemetry.m_CostMs);
-	DrawRow(Content, BcLocalize("Safe:"), aSafeBuf, ColorRGBA(0.85f, 0.90f, 0.98f, 1.0f));
+		str_format(aBuf, sizeof(aBuf), "%d tick", m_Telemetry.m_SurvivalTicks);
+	DrawRow(Content, BcLocalize("Safe:"), aBuf, ColorRGBA(0.85f, 0.90f, 0.98f, 1.0f));
 
-	char aTakesBuf[48];
 	if(ForcePreview)
-		str_copy(aTakesBuf, "0 / 0");
+		str_copy(aBuf, "0.00 ms");
 	else
-		str_format(aTakesBuf, sizeof(aTakesBuf), "%d / %d", m_Telemetry.m_Overrides, m_Telemetry.m_Decisions);
-	DrawRow(Content, BcLocalize("Override:"), aTakesBuf, ColorRGBA(0.85f, 0.90f, 0.98f, 1.0f));
+		str_format(aBuf, sizeof(aBuf), "%.2f ms", m_Telemetry.m_CostMs);
+	DrawRow(Content, BcLocalize("Cost:"), aBuf, ColorRGBA(0.85f, 0.90f, 0.98f, 1.0f));
 
-	char aPlanBuf[64];
 	if(ForcePreview)
-		str_copy(aPlanBuf, "player input safe");
+		str_copy(aBuf, "0 / 0");
 	else
-		str_copy(aPlanBuf, m_Telemetry.m_aReason[0] ? m_Telemetry.m_aReason : "<none>");
-	DrawRow(Content, BcLocalize("Plan:"), aPlanBuf, ColorRGBA(0.95f, 0.85f, 0.45f, 1.0f));
+		str_format(aBuf, sizeof(aBuf), "%d / %d", m_Telemetry.m_Overrides, m_Telemetry.m_Decisions);
+	DrawRow(Content, BcLocalize("Override:"), aBuf, ColorRGBA(0.85f, 0.90f, 0.98f, 1.0f));
 
 	TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
-void CAvoid::RenderWorldOverlay(const CCharacterCore &Core, const SThreat &Threat)
+void CAvoid::RenderWorldOverlay(const CCharacterCore &Core)
 {
 	if(!Collision() || Collision()->GetWidth() <= 0 || Collision()->GetHeight() <= 0)
 		return;
-
-	const vec2 Pos = OverlayAnchor(Core);
+	if(Graphics()->ScreenAspect() <= 0.0f)
+		return;
 
 	const CScreenRect PreviousScreen = Graphics()->GetScreen();
 	const CScreenRect WorldScreen = Graphics()->MapScreenToWorld(
@@ -681,106 +625,66 @@ void CAvoid::RenderWorldOverlay(const CCharacterCore &Core, const SThreat &Threa
 		GameClient()->m_Camera.m_Zoom);
 	Graphics()->MapScreen(WorldScreen);
 
-	const float RadiusX = std::max(1.0f, m_Settings.m_SensingRadius);
-	const float RadiusY = std::max(1.0f, RadiusX * Avoid::SensingVerticalFactor(Core, m_Settings));
-	const float ReachX = RadiusX * TILE_SIZE;
-	const float ReachY = RadiusY * TILE_SIZE;
-	const int ScanX = (int)std::ceil(RadiusX);
-	const int ScanY = (int)std::ceil(RadiusY);
-	const int CenterX = (int)std::floor(Core.m_Pos.x / TILE_SIZE);
-	const int CenterY = (int)std::floor(Core.m_Pos.y / TILE_SIZE);
-
-	const int MinTileX = std::clamp(CenterX - ScanX, 0, Collision()->GetWidth() - 1);
-	const int MaxTileX = std::clamp(CenterX + ScanX, 0, Collision()->GetWidth() - 1);
-	const int MinTileY = std::clamp(CenterY - ScanY, 0, Collision()->GetHeight() - 1);
-	const int MaxTileY = std::clamp(CenterY + ScanY, 0, Collision()->GetHeight() - 1);
-
-	Graphics()->TextureClear();
-	Graphics()->QuadsBegin();
-	for(int Ty = MinTileY; Ty <= MaxTileY; ++Ty)
+	// 1. The predicted path of the current plan.
+	if(g_Config.m_BcAvoidDrawPath && m_vLastPath.size() >= 2)
 	{
-		for(int Tx = MinTileX; Tx <= MaxTileX; ++Tx)
+		static std::vector<IGraphics::CLineItem> s_vLines;
+		s_vLines.clear();
+		s_vLines.reserve(m_vLastPath.size() - 1);
+		for(size_t i = 0; i + 1 < m_vLastPath.size(); ++i)
 		{
-			const vec2 TileCenter((Tx + 0.5f) * TILE_SIZE, (Ty + 0.5f) * TILE_SIZE);
-			const int Flags = ClassifyPoint(TileCenter);
-			if(Flags == HAZ_NONE || !IsRelevantHazard(Flags))
+			const vec2 A = m_vLastPath[i];
+			const vec2 B = m_vLastPath[i + 1];
+			if(!std::isfinite(A.x) || !std::isfinite(A.y) || !std::isfinite(B.x) || !std::isfinite(B.y))
 				continue;
-			const vec2 Delta = Avoid::TileBoxDelta(Pos, Tx, Ty);
-			if((Delta.x / ReachX) * (Delta.x / ReachX) + (Delta.y / ReachY) * (Delta.y / ReachY) > 1.0f)
-				continue;
-
-			ColorRGBA Col = HazardColor(Flags);
-			Col.a = 0.20f;
-			Graphics()->SetColor(Col);
-			const IGraphics::CQuadItem Quad(Tx * TILE_SIZE + 2.0f, Ty * TILE_SIZE + 2.0f, TILE_SIZE - 4.0f, TILE_SIZE - 4.0f);
-			Graphics()->QuadsDrawTL(&Quad, 1);
+			s_vLines.emplace_back(A, B);
 		}
-	}
-	Graphics()->QuadsEnd();
-
-	const int NumSegments = 64;
-	static IGraphics::CLineItem s_aRing[NumSegments];
-	static IGraphics::CLineItem s_aVector[2];
-	const float RingRadius = ReachX;
-	for(int i = 0; i < NumSegments; ++i)
-	{
-		const float A0 = 2.0f * pi * (float)i / (float)NumSegments;
-		const float A1 = 2.0f * pi * (float)(i + 1) / (float)NumSegments;
-		s_aRing[i] = IGraphics::CLineItem(Pos + vec2(std::cos(A0) * RingRadius, std::sin(A0) * ReachY),
-			Pos + vec2(std::cos(A1) * RingRadius, std::sin(A1) * ReachY));
-	}
-	Graphics()->TextureClear();
-	Graphics()->LinesBegin();
-	Graphics()->SetColor(0.45f, 0.65f, 0.95f, 0.35f);
-	Graphics()->LinesDraw(s_aRing, NumSegments);
-	Graphics()->LinesEnd();
-
-	if(Threat.m_HasNearest)
-	{
-		s_aVector[0] = IGraphics::CLineItem(Pos, Threat.m_NearestPos);
-		s_aVector[1] = IGraphics::CLineItem(Threat.m_NearestPos, Threat.m_NearestPos + vec2(0.0f, -6.0f));
-		Graphics()->TextureClear();
-		Graphics()->LinesBegin();
-		Graphics()->SetColor(HazardColor(Threat.m_Flags));
-		Graphics()->LinesDraw(s_aVector, 2);
-		Graphics()->LinesEnd();
-	}
-
-	// Track point overlay for Blatant
-	Avoid::CBlatantAgent *pBlatant = (Agent() == AGENT_BLATANT) ? static_cast<Avoid::CBlatantAgent *>(m_apAgents[AGENT_BLATANT]) : nullptr;
-	if(pBlatant && pBlatant->TrackPointValid())
-	{
-		const vec2 TrackDiff = pBlatant->TrackPointPos() - Pos;
-		if(length(TrackDiff) > 1.0f)
+		if(!s_vLines.empty())
 		{
-			const vec2 TrackEnd = Pos + normalize(TrackDiff) * 48.0f;
-			static IGraphics::CLineItem s_aAimLines[3];
-			s_aAimLines[0] = IGraphics::CLineItem(Pos, TrackEnd);
-			s_aAimLines[1] = IGraphics::CLineItem(TrackEnd, TrackEnd + vec2(0.0f, -5.0f));
-			s_aAimLines[2] = IGraphics::CLineItem(TrackEnd, TrackEnd + vec2(-5.0f, 0.0f));
 			Graphics()->TextureClear();
 			Graphics()->LinesBegin();
-			Graphics()->SetColor(0.36f, 0.68f, 1.00f, 0.85f);
-			Graphics()->LinesDraw(s_aAimLines, 3);
+			Graphics()->SetColor(PathColor());
+			Graphics()->LinesDraw(s_vLines.data(), (int)s_vLines.size());
 			Graphics()->LinesEnd();
 		}
 	}
 
-	if(m_Telemetry.m_AimChanged)
+	// 2. The Blatant tracked aim point.
+	if(g_Config.m_BcAvoidDrawTrackPoint && m_Telemetry.m_TrackPoint.m_Valid)
 	{
-		const vec2 AimRaw = vec2((float)m_Telemetry.m_AimTargetX, (float)m_Telemetry.m_AimTargetY);
-		if(length(AimRaw) > 0.001f)
+		const vec2 Target = m_Telemetry.m_TrackPoint.m_Pos;
+		const vec2 Diff = Target - Core.m_Pos;
+		if(length(Diff) > 1.0f)
 		{
-			const vec2 AimDir = normalize(AimRaw);
-			const vec2 AimEnd = Pos + AimDir * 80.0f;
-			static IGraphics::CLineItem s_aAimLines[3];
-			s_aAimLines[0] = IGraphics::CLineItem(Pos, AimEnd);
-			s_aAimLines[1] = IGraphics::CLineItem(AimEnd, AimEnd + vec2(-6.0f, -3.0f));
-			s_aAimLines[2] = IGraphics::CLineItem(AimEnd, AimEnd + vec2(6.0f, -3.0f));
+			static IGraphics::CLineItem s_aMarker[5];
+			s_aMarker[0] = IGraphics::CLineItem(Core.m_Pos, Target);
+			s_aMarker[1] = IGraphics::CLineItem(Target + vec2(-6.0f, 0.0f), Target + vec2(6.0f, 0.0f));
+			s_aMarker[2] = IGraphics::CLineItem(Target + vec2(0.0f, -6.0f), Target + vec2(0.0f, 6.0f));
+			s_aMarker[3] = IGraphics::CLineItem(Target + vec2(-5.0f, -5.0f), Target + vec2(5.0f, 5.0f));
+			s_aMarker[4] = IGraphics::CLineItem(Target + vec2(-5.0f, 5.0f), Target + vec2(5.0f, -5.0f));
 			Graphics()->TextureClear();
 			Graphics()->LinesBegin();
-			Graphics()->SetColor(0.98f, 0.62f, 0.16f, 0.9f);
-			Graphics()->LinesDraw(s_aAimLines, 3);
+			Graphics()->SetColor(0.36f, 0.68f, 1.00f, 0.90f);
+			Graphics()->LinesDraw(s_aMarker, 5);
+			Graphics()->LinesEnd();
+		}
+	}
+
+	// 3. The Blatant aimbot target.
+	if(g_Config.m_BcAvoidDrawAimbot && m_Telemetry.m_AimTarget.m_Valid)
+	{
+		const vec2 Target = m_Telemetry.m_AimTarget.m_Pos;
+		const vec2 Diff = Target - Core.m_Pos;
+		if(length(Diff) > 1.0f)
+		{
+			static IGraphics::CLineItem s_aMarker[3];
+			s_aMarker[0] = IGraphics::CLineItem(Core.m_Pos, Target);
+			s_aMarker[1] = IGraphics::CLineItem(Target + vec2(-6.0f, 0.0f), Target + vec2(6.0f, 0.0f));
+			s_aMarker[2] = IGraphics::CLineItem(Target + vec2(0.0f, -6.0f), Target + vec2(0.0f, 6.0f));
+			Graphics()->TextureClear();
+			Graphics()->LinesBegin();
+			Graphics()->SetColor(0.98f, 0.62f, 0.16f, 0.90f);
+			Graphics()->LinesDraw(s_aMarker, 3);
 			Graphics()->LinesEnd();
 		}
 	}
@@ -798,8 +702,8 @@ void CAvoid::ConAvoidToggle(IConsole::IResult *pResult, void *pUserData)
 {
 	(void)pResult;
 	CAvoid *pSelf = static_cast<CAvoid *>(pUserData);
-	pSelf->ToggleArmed();
-	pSelf->GameClient()->Echo(pSelf->IsArmed() ? "Avoid agent armed." : "Avoid agent disarmed.");
+	pSelf->ToggleEnabled();
+	pSelf->GameClient()->Echo(pSelf->IsEnabled() ? BcLocalize("Avoid: enabled") : BcLocalize("Avoid: disabled"));
 }
 
 void CAvoid::ConAvoidStatus(IConsole::IResult *pResult, void *pUserData)
