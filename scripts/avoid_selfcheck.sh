@@ -50,7 +50,21 @@ keys = ["Avoid", "Assist mode", "Arm Avoid agent", "Check ticks", "NSIF on no sa
         "no safer plan (jump is a last resort)",
         # v1.2.4: restore-defaults button
         "Defaults", "Restored", "Avoid: parameters restored to their defaults",
-        "The sensing radius is how far ahead the agent may notice a hazard, in half tiles (12 = 6 tiles). Lower it to react later, raise it to react earlier; the scan itself costs almost nothing."]
+        "The sensing radius is how far ahead the agent may notice a hazard, in half tiles (12 = 6 tiles). Lower it to react later, raise it to react earlier; the scan itself costs almost nothing.",
+        # stage 4 (Blatant decision engine): the aim layer and its reasons
+        "auto drag: hook the closest tee", "auto drag: hook the closest tee, brake",
+        "auto drag: hook the closest tee, steer left", "auto drag: hook the closest tee, steer right",
+        "auto drag: aim at the closest tee", "auto drag: aim at the closest tee, brake",
+        "auto drag: aim at the closest tee, steer left", "auto drag: aim at the closest tee, steer right",
+        "track point: keep aim and press hook", "track point: keep aim and press hook, brake",
+        "track point: keep aim and press hook, steer left", "track point: keep aim and press hook, steer right",
+        "track point: hold the hookable aim", "track point: hold the hookable aim, brake",
+        "track point: hold the hookable aim, steer left", "track point: hold the hookable aim, steer right",
+        "aim at the safest hookable spot and press hook", "aim at the safest hookable spot and press hook, brake",
+        "aim at the safest hookable spot and press hook, steer left", "aim at the safest hookable spot and press hook, steer right",
+        "aim at the safest hookable spot", "aim at the safest hookable spot, brake",
+        "aim at the safest hookable spot, steer left", "aim at the safest hookable spot, steer right",
+        "release hook and aim clear of the hazard"]
 for path in ("data/BestClient/languages/simplified_chinese.txt",
              "data/BestClient/languages/russian.txt"):
     text = open(path, encoding="utf-8").read()
@@ -97,53 +111,37 @@ for table_name, body in tables:
         assert (", %s," % name) in cvars, "unknown cvar in %s: %s" % (table_name, name)
     total += len(names)
 print("  ok:", len(tables), "tables,", total, "entries")
+
+# Every agent page that exposes parameters needs a way to reach the tile switches and the sensing
+# radius. Blatant was missing its `Tiles` panel from stage 1 until v1.4.1, which made those settings
+# unreachable on that page - and the "restore defaults" table kept resetting them anyway.
+def panels(name):
+    body = re.search(r'const SAvoidPanelDef %s\[\] = \{(.*?)\};' % name, t, re.S)
+    assert body, name + " is missing"
+    return re.findall(r'\{PANEL_(\w+), "([^"]+)"\}', body.group(1))
+for table, expected in (("g_aBasicPanels", 2), ("g_aLegitPanels", 4), ("g_aBlatantPanels", 6),
+                        ("g_aFentPanels", 4), ("g_aPilotPanels", 4)):
+    got = panels(table)
+    assert len(got) == expected, "%s has %d panels, expected %d" % (table, len(got), expected)
+    assert "TILES" in [k for k, _ in got], table + " cannot reach the tile switches"
+print("  ok: every agent page reaches its Tiles panel")
 EOF
 
 echo "[6/6] decision engine wiring"
 python3 - <<'EOF'
-# --- the shared simulator and the agents ------------------------------------------------
+# --- KRX reproduction architecture ------------------------------------------------
 t = open("src/game/client/components/bestclient/avoid_engine.cpp", encoding="utf-8").read()
-assert "int SimulateFixed(" in t, "forward simulator is missing"
-assert "SInputPlan CPlanner::Plan(" in t, "the Legit planner is missing"
-# Sensor reuse: the engine has to ask the stage 1 probe rules, never a private copy.
-assert "IsRelevantHazard(Set, ClassifyPoint(pCollision, m_Sim.m_Core.m_Pos))" in t, \
-    "the simulator must reuse ClassifyPoint()/IsRelevantHazard()"
-assert "m_Core.m_Tuning = Src.m_Tuning" in t, "the simulator must use the map tuning, not constants"
-# Candidate space: direction x jump x hook, with the player's own values first.
-assert "MAX_ROOT_ACTIONS" in t and "const int aJumps[2]" in t and "int aHooks[3]" in t, \
-    "the Legit candidate space is not direction x jump x hook"
-# Search: UCT with a deterministic local PRNG, a quality-driven iteration count and a budget guard.
-assert "m_Prng.Seed(" in t, "the search must use a local, seeded PRNG"
-assert "rand()" not in t and "srand" not in t, "no global RNG in the decision path"
-assert "MeanScore(" in t and "RankingScore(" in t, "the UCT value functions are missing"
-assert "SEARCH_BUDGET_MS" in t, "the search has no wall clock guard"
-# Player prediction: a private world carrying the snapshots.
-assert "m_aShadows[NumShadows] = Snapshot.m_Core" in t and "m_World.m_apCharacters[m_aShadows[" in t, \
-    "the predicted players are not injected into the clone world"
-assert "Env.m_PredictPlayers" in t, "bc_avoid_player_prediction is not wired into the simulator"
-# Unfreeze lookahead and the movement state gate.
-assert "m_UnfreezeTicks" in t, "bc_avoid_unfreeze_ticks is not wired into the engine"
-# Jump policy: a rope problem is never solved by hopping, and the jump waits for the critical
-# moment. Both live in UpdateAvailability()/JumpEngaged().
-assert "JUMP_URGENCY_TICKS" in t and "void CPlanner::UpdateAvailability(" in t, \
-    "the jump is not held back until the critical moment any more"
-assert "bool CPlanner::JumpEngaged(" in t and "HOOK_GRABBED" in t, \
-    "jumps are no longer suppressed while the hook is engaged"
-# The sensing reach is an ellipse derived from the map tuning, not a circle.
-assert "float SensingVerticalFactor(" in t and "SENSING_VERTICAL_FALLBACK" in t, \
-    "the sensing reach is not the tuning derived ellipse any more"
-assert "TileBoxDelta(Pos, Tx, Ty)" in t, "the sensor does not use the per axis tile box distance"
-# The sensing radius is a radius in tiles with half tile steps, measured to the hazard box.
-assert "const float RadiusX = std::clamp(Set.m_SensingRadius, 0.5f, 16.0f);" in t, \
-    "the sensing radius is not applied as a fractional distance to the hazard box"
-assert "int ClassifyMovement(" in t, "the movement state gate is missing"
-assert "ClassifyMovement(Ctx.m_Core, FlyHammerState(Ctx)" in open(
-    "src/game/client/components/bestclient/avoid.cpp", encoding="utf-8").read(), \
-    "the client component does not apply the movement state gate"
+assert "int SimulateCandidate(" in t, "SimulateCandidate is missing"
+assert "CopyWorldClean(" in t, "CopyWorldClean is missing"
+assert "AvoidInput CBasicAgent::GetAction(" in t, "Basic agent is missing"
+assert "AvoidInput CBlatantAgent::GetAction(" in t, "Blatant agent is missing"
+assert "AvoidInput CLegitAgent::GetAction(" in t, "Legit agent is missing"
+assert "AvoidInput CFentbotAgent::GetAction(" in t, "Fentbot agent is missing"
+assert "AvoidInput CPilotAgent::GetAction(" in t, "Pilot agent is missing"
+assert "bool IsHookable(" in t and "IntersectLineTeleHook(" in t, \
+    "the hookability probe has to use the engine's own hook ray"
 
 # --- config compatibility ----------------------------------------------------------------
-# `bc_avoid_sensing_radius` changed from tiles to half tiles; the migration has to stay, together
-# with the version bump that makes it run exactly once.
 t = open("src/engine/shared/config_variables_bestclient.h", encoding="utf-8").read()
 assert "bc_avoid_sensing_radius, 2, 1, 32" in t, "bc_avoid_sensing_radius is not in half tiles any more"
 t = open("src/engine/client/client.cpp", encoding="utf-8").read()
@@ -155,23 +153,15 @@ assert "ClConfigVersion, cl_config_version, 2," in t, \
     "a fresh config must already be at version 2, otherwise it would migrate its own default"
 
 # --- the client component ---------------------------------------------------------------
-t = open("src/game/client/components/bestclient/avoid.cpp", encoding="utf-8").read()
-assert "int CAvoid::SimulateInput(" in t, "forward simulator wrapper is missing"
-assert "CAvoid::SInputPlan CAvoid::EvaluateBestPlan(" in t, "decision engine is missing"
-# The sensing radius has to gate the engine, otherwise the setting only moves the HUD readout.
-assert "!Ctx.m_Threat.m_HasNearest" in t, "the sensing radius gate is missing from the decision engine"
-assert "m_Controls.m_aInputData" not in t.replace("`m_Controls.m_aInputData`", ""), "avoid must never write the raw key state buffer"
-assert "STAGE 2 IMPLEMENTATION SLOT" not in t, "the stage 2 slot should be filled in now"
-# Basic must still only rewrite the direction: the Legit agent is the one that touches jump/hook,
-# and it lives in avoid_engine.cpp. Reads of the fields (the log line) are fine, writes are not.
-for forbidden in (".m_Hook = ", ".m_Jump = ", ".m_Fire = "):
-    assert forbidden not in t, f"avoid.cpp must not write {forbidden.strip()}"
-assert "Plan.m_Input.m_Direction = BestDir" in t, "Basic must only change m_Direction"
+act = open("src/game/client/components/bestclient/avoid.cpp", encoding="utf-8").read()
+assert "pAgent->GetAction(" in act, "agent action dispatch is missing"
+assert "m_Controls.m_aInputData" not in act.replace("`m_Controls.m_aInputData`", ""), "avoid must never write the raw key state buffer"
 print("  ok")
 EOF
 
-echo "[6b/6] simulator fidelity + sensing radius + Legit agent tests"
+echo "[6b/6] testrunner test suite"
 ninja -C build testrunner
-./build/testrunner --gtest_filter='CAvoidSimulatorTest.*:CAvoidSensingRadiusTest.*:CAvoidLegitTest.*'
+./build/testrunner
 
 echo "all checks passed"
+

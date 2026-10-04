@@ -260,6 +260,7 @@ public:
 	void SetArmor(int Armor) { m_Armor = Armor; }
 	CCharacterCore GetCore() { return m_Core; }
 	void SetCore(const CCharacterCore &Core) { m_Core = Core; }
+	CCharacterCore *Core() { return &m_Core; }
 	const CCharacterCore *Core() const { return &m_Core; }
 	bool GetWeaponGot(int Type) { return m_Core.m_aWeapons[Type].m_Got; }
 	void SetWeaponGot(int Type, bool Value) { m_Core.m_aWeapons[Type].m_Got = Value; }

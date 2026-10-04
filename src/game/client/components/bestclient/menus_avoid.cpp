@@ -154,6 +154,9 @@ const SAvoidPanelDef g_aBlatantPanels[] = {
 	{PANEL_PRIORITIES, "Priorities"},
 	{PANEL_AIMBOT, "Aimbot"},
 	{PANEL_SAFETY, "Safety"},
+	// Blatant needs the tile switches *and* the sensing radius like every other agent; the panel was
+	// missing here since stage 1, which left those settings unreachable on this page.
+	{PANEL_TILES, "Tiles"},
 };
 // "Restore defaults" only stores the *script names*, so every value comes from the cvar
 // definition in `config_variables_bestclient.h`. There is deliberately no second copy of the
@@ -203,12 +206,52 @@ const char *const g_aLegitDefaultParams[] = {
 	"bc_avoid_sensing_radius",
 };
 
-// Blatant / Fentbot / Pilot get their list when their algorithms land (stage 4+); until then the
-// button is simply not drawn for them, so nothing pretends to reset parameters that do nothing.
+// Blatant (stage 4) reads the whole assistant / aim / priority / safety surface, so "restore
+// defaults" covers all of it - including the parameters whose sliders live in another panel.
+const char *const g_aBlatantDefaultParams[] = {
+	// Assist panel.
+	"bc_avoid_direction_assist",
+	"bc_avoid_hook_assist",
+	"bc_avoid_track_point",
+	"bc_avoid_safe_aim_tracking",
+	"bc_avoid_auto_drag",
+	"bc_avoid_player_prediction",
+	// Tuning panel.
+	"bc_avoid_check_ticks",
+	"bc_avoid_kick_in_ticks",
+	"bc_avoid_quality",
+	"bc_avoid_randomness",
+	// Priorities panel.
+	"bc_avoid_direction_weight",
+	"bc_avoid_hook_weight",
+	"bc_avoid_life_weight",
+	// Aimbot panel.
+	"bc_avoid_aimbot",
+	"bc_avoid_aimbot_mode",
+	"bc_avoid_aimbot_segments",
+	"bc_avoid_aimbot_fov",
+	// Safety panel.
+	"bc_avoid_nsif",
+	"bc_avoid_afk_protect",
+	"bc_avoid_afk_time",
+	// Tiles panel.
+	"bc_avoid_tile_death",
+	"bc_avoid_tile_freeze",
+	"bc_avoid_tile_unfreeze",
+	"bc_avoid_tile_tele",
+	"bc_avoid_unfreeze_ticks",
+	"bc_avoid_sensing_radius",
+};
+
+// Fentbot / Pilot get their list when their algorithms land (stage 5/6); until then the button is
+// simply not drawn for them, so nothing pretends to reset parameters that do nothing.
 const char *const *AvoidDefaultParams(int Agent, int *pCount)
 {
 	switch(Agent)
 	{
+	case CAvoid::AGENT_BLATANT:
+		*pCount = (int)std::size(g_aBlatantDefaultParams);
+		return g_aBlatantDefaultParams;
 	case CAvoid::AGENT_LEGIT:
 		*pCount = (int)std::size(g_aLegitDefaultParams);
 		return g_aLegitDefaultParams;

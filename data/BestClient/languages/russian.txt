@@ -3342,3 +3342,103 @@ Restored
 [BestClient]
 Avoid: parameters restored to their defaults
 == Avoid: параметры сброшены к значениям по умолчанию
+
+[BestClient]
+auto drag: hook the closest tee
+== авто-драг: зацепить ближайшего игрока
+
+[BestClient]
+track point: keep aim and press hook
+== точка слежения: держать прицел и нажать крюк
+
+[BestClient]
+auto drag: aim at the closest tee
+== авто-драг: прицелиться в ближайшего игрока
+
+[BestClient]
+track point: hold the hookable aim
+== точка слежения: держать зацепляемый прицел
+
+[BestClient]
+aim at the safest hookable spot and press hook
+== прицелиться в безопасное место и нажать крюк
+
+[BestClient]
+aim at the safest hookable spot
+== прицелиться в безопасное зацепляемое место
+
+[BestClient]
+auto drag: hook the closest tee, brake
+== авто-драг: зацепить ближайшего игрокас торможением
+
+[BestClient]
+track point: keep aim and press hook, brake
+== точка слежения: держать прицел и нажать крюкс торможением
+
+[BestClient]
+auto drag: aim at the closest tee, brake
+== авто-драг: прицелиться в ближайшего игрокас торможением
+
+[BestClient]
+track point: hold the hookable aim, brake
+== точка слежения: держать зацепляемый прицелс торможением
+
+[BestClient]
+aim at the safest hookable spot and press hook, brake
+== прицелиться в безопасное место и нажать крюкс торможением
+
+[BestClient]
+aim at the safest hookable spot, brake
+== прицелиться в безопасное зацепляемое местос торможением
+
+[BestClient]
+auto drag: hook the closest tee, steer left
+== авто-драг: зацепить ближайшего игрокавлево
+
+[BestClient]
+track point: keep aim and press hook, steer left
+== точка слежения: держать прицел и нажать крюквлево
+
+[BestClient]
+auto drag: aim at the closest tee, steer left
+== авто-драг: прицелиться в ближайшего игрокавлево
+
+[BestClient]
+track point: hold the hookable aim, steer left
+== точка слежения: держать зацепляемый прицелвлево
+
+[BestClient]
+aim at the safest hookable spot and press hook, steer left
+== прицелиться в безопасное место и нажать крюквлево
+
+[BestClient]
+aim at the safest hookable spot, steer left
+== прицелиться в безопасное зацепляемое местовлево
+
+[BestClient]
+auto drag: hook the closest tee, steer right
+== авто-драг: зацепить ближайшего игрокавправо
+
+[BestClient]
+track point: keep aim and press hook, steer right
+== точка слежения: держать прицел и нажать крюквправо
+
+[BestClient]
+auto drag: aim at the closest tee, steer right
+== авто-драг: прицелиться в ближайшего игрокавправо
+
+[BestClient]
+track point: hold the hookable aim, steer right
+== точка слежения: держать зацепляемый прицелвправо
+
+[BestClient]
+aim at the safest hookable spot and press hook, steer right
+== прицелиться в безопасное место и нажать крюквправо
+
+[BestClient]
+aim at the safest hookable spot, steer right
+== прицелиться в безопасное зацепляемое местовправо
+
+[BestClient]
+release hook and aim clear of the hazard
+== отпустить крюк и увести прицел от опасности

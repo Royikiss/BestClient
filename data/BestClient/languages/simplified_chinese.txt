@@ -3342,3 +3342,103 @@ Restored
 [BestClient]
 Avoid: parameters restored to their defaults
 == 避障：参数已恢复为默认值
+
+[BestClient]
+auto drag: hook the closest tee
+== 自动拖拽：勾住最近的玩家
+
+[BestClient]
+track point: keep aim and press hook
+== 跟踪点：保持瞄向并按下钩子
+
+[BestClient]
+auto drag: aim at the closest tee
+== 自动拖拽：瞄准最近的玩家
+
+[BestClient]
+track point: hold the hookable aim
+== 跟踪点：保持可勾住的瞄向
+
+[BestClient]
+aim at the safest hookable spot and press hook
+== 瞄向最安全的可勾点并按下钩子
+
+[BestClient]
+aim at the safest hookable spot
+== 瞄向最安全的可勾点
+
+[BestClient]
+auto drag: hook the closest tee, brake
+== 自动拖拽：勾住最近的玩家并刹车
+
+[BestClient]
+track point: keep aim and press hook, brake
+== 跟踪点：保持瞄向并按下钩子并刹车
+
+[BestClient]
+auto drag: aim at the closest tee, brake
+== 自动拖拽：瞄准最近的玩家并刹车
+
+[BestClient]
+track point: hold the hookable aim, brake
+== 跟踪点：保持可勾住的瞄向并刹车
+
+[BestClient]
+aim at the safest hookable spot and press hook, brake
+== 瞄向最安全的可勾点并按下钩子并刹车
+
+[BestClient]
+aim at the safest hookable spot, brake
+== 瞄向最安全的可勾点并刹车
+
+[BestClient]
+auto drag: hook the closest tee, steer left
+== 自动拖拽：勾住最近的玩家并向左
+
+[BestClient]
+track point: keep aim and press hook, steer left
+== 跟踪点：保持瞄向并按下钩子并向左
+
+[BestClient]
+auto drag: aim at the closest tee, steer left
+== 自动拖拽：瞄准最近的玩家并向左
+
+[BestClient]
+track point: hold the hookable aim, steer left
+== 跟踪点：保持可勾住的瞄向并向左
+
+[BestClient]
+aim at the safest hookable spot and press hook, steer left
+== 瞄向最安全的可勾点并按下钩子并向左
+
+[BestClient]
+aim at the safest hookable spot, steer left
+== 瞄向最安全的可勾点并向左
+
+[BestClient]
+auto drag: hook the closest tee, steer right
+== 自动拖拽：勾住最近的玩家并向右
+
+[BestClient]
+track point: keep aim and press hook, steer right
+== 跟踪点：保持瞄向并按下钩子并向右
+
+[BestClient]
+auto drag: aim at the closest tee, steer right
+== 自动拖拽：瞄准最近的玩家并向右
+
+[BestClient]
+track point: hold the hookable aim, steer right
+== 跟踪点：保持可勾住的瞄向并向右
+
+[BestClient]
+aim at the safest hookable spot and press hook, steer right
+== 瞄向最安全的可勾点并按下钩子并向右
+
+[BestClient]
+aim at the safest hookable spot, steer right
+== 瞄向最安全的可勾点并向右
+
+[BestClient]
+release hook and aim clear of the hazard
+== 松开钩子并把准星移开危险

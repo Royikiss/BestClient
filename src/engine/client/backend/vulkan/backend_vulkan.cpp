@@ -3286,7 +3286,7 @@ protected:
 	VkPipelineLayout &GetStandardPipeLayout(bool IsLineGeometry, bool IsTextured, size_t BlendModeIndex, size_t DynamicIndex)
 	{
 		if(IsLineGeometry)
-			return GetPipeLayout(m_StandardLinePipeline, IsTextured, BlendModeIndex, DynamicIndex);
+			return GetPipeLayout(m_StandardLinePipeline, false, BlendModeIndex, DynamicIndex);
 		else
 			return GetPipeLayout(m_StandardPipeline, IsTextured, BlendModeIndex, DynamicIndex);
 	}
@@ -3294,7 +3294,7 @@ protected:
 	VkPipeline &GetStandardPipe(bool IsLineGeometry, bool IsTextured, size_t BlendModeIndex, size_t DynamicIndex)
 	{
 		if(IsLineGeometry)
-			return GetPipeline(m_StandardLinePipeline, IsTextured, BlendModeIndex, DynamicIndex);
+			return GetPipeline(m_StandardLinePipeline, false, BlendModeIndex, DynamicIndex);
 		else
 			return GetPipeline(m_StandardPipeline, IsTextured, BlendModeIndex, DynamicIndex);
 	}
@@ -3411,6 +3411,9 @@ protected:
 
 	void BindPipeline(size_t RenderThreadIndex, VkCommandBuffer &CommandBuffer, SRenderCommandExecuteBuffer &ExecBuffer, VkPipeline &BindingPipe, const CCommandBuffer::SState &State)
 	{
+		if(BindingPipe == VK_NULL_HANDLE)
+			return;
+
 		if(m_vLastPipeline[RenderThreadIndex] != BindingPipe)
 		{
 			vkCmdBindPipeline(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, BindingPipe);
@@ -3522,6 +3525,8 @@ protected:
 		size_t DynamicIndex;
 		size_t AddressModeIndex;
 		GetStateIndices(ExecBuffer, State, IsTextured, BlendModeIndex, DynamicIndex, AddressModeIndex);
+		if(IsLineGeometry)
+			IsTextured = false;
 		auto &PipeLayout = Is3DTextured ? GetPipeLayout(m_Standard3DPipeline, IsTextured, BlendModeIndex, DynamicIndex) : GetStandardPipeLayout(IsLineGeometry, IsTextured, BlendModeIndex, DynamicIndex);
 		auto &PipeLine = Is3DTextured ? GetPipeline(m_Standard3DPipeline, IsTextured, BlendModeIndex, DynamicIndex) : GetStandardPipe(IsLineGeometry, IsTextured, BlendModeIndex, DynamicIndex);
 
