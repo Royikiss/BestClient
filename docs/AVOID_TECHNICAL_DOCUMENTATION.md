@@ -2,14 +2,14 @@
 
 > 适用对象：接下来要改 Avoid 模块的人。
 > 快照时间：2026-10-05（v5.0：五级前置门控 + 10-Tick 探针 + 扇区准星扫描 + Legit 26-Tick 后验增益仲裁 +
-> Blatant 六级级联（含 `std::async` 并发贪心与 NSIF 保留式回放）；写作时逐行复核过下列文件）。
+> Blatant 八级级联（含 `std::async` 并发贪心、提前松勾、净空二段跳、上半球出勾雷达与 NSIF 保留式回放）；写作时逐行复核过下列文件）。
 > 覆盖的源码：`src/game/client/components/bestclient/` 下的 `avoid.h` / `avoid.cpp`（输入拦截、**前置门控与
 > 探针调度**、遥测、HUD、世界覆盖层、瓦片编辑器交互）、`avoid_decision.h`（**纯函数**决策规则：玩法黑名单、
 > 探针阈值、扇区角度、26-Tick 增益仲裁、Legit 启发式与根节点选择、两个候选集、接近目标输入）、
 > `avoid_engine.h` / `avoid_engine.cpp`（前向推演、探针与扇区扫描、并发分支推演、导航网格、五个代理）、
 > `avoid_tile_editor.h` / `.cpp`（规格 §10 瓦片编辑器）、`menus_avoid.cpp`
 > （菜单）；`src/engine/shared/config_variables_bestclient.h` 的 `bc_avoid_*` 区块（616–677 行）；
-> `scripts/avoid_selfcheck.sh`（445 行）、`src/test/avoid_decision_test.cpp`（17 条决策回归测试，428 行）；
+> `scripts/avoid_selfcheck.sh`、`src/test/avoid_decision_test.cpp`（23 条决策回归测试）；
 > `src/game/client/gameclient.cpp` 的 `OnSnapInput()`（输入钩子）。
 >
 > 参考实现规格：`docs/avoid/KRX_AVOID_REPRODUCTION_SPEC.md`（1658 行）。下文用 “spec §N” 指该文件的章节。
@@ -40,26 +40,26 @@
 代理之前还有一条前置流水线：门控 0（总开关 + 本地 Tee）→ 门控 1–4（`CAvoid::PreActivation()`，玩法黑名单 / 观战与暂停 / 自身已冻结 / AFK）→ 门控 5（`CAvoid::RunLightweightProbe()`，10-Tick 基线探针）→ 阶段 2（`Avoid::RunSectorScan()`，扇区准星扫描）→ 阶段 3（代理）。任何一道门控命中都直接放行玩家原输入，`m_LastGate` 记下是哪一道（§3.5）。
 
 **4. 五个代理，一个 dispatcher。**
-`Avoid::BLAgent` 是抽象基类，`CBasicAgent` / `CLegitAgent` / `CBlatantAgent` / `CFentbotAgent` / `CPilotAgent` 各实现一个 `GetAction()`；与参考无关的**纯决策规则**（玩法黑名单 `IsBlacklistedGametype`、探针阈值 `ProbeIsSafe`、扇区角度 `SectorScanAngle`、26-Tick 增益仲裁 `ArbitrationGain` / `ArbitrationAllowsOverride`、Legit 启发式与根节点选择、两个候选集枚举、接近目标输入）单独放在 `avoid_decision.h` 里，可脱离游戏单测（§5.3、§11）。
+`Avoid::BLAgent` 是抽象基类，`CBasicAgent` / `CLegitAgent` / `CBlatantAgent` / `CFentbotAgent` / `CPilotAgent` 各实现一个 `GetAction()`；与参考无关的**纯决策规则**（玩法黑名单 `IsBlacklistedGametype`、探针阈值 `ProbeIsSafe`、扇区角度 `SectorScanAngle`、26-Tick 增益仲裁 `ArbitrationGain` / `ArbitrationAllowsOverride`、Legit 启发式与根节点选择、两个候选集枚举、接近目标输入，以及 v5.1 的提前松勾判定 `PreemptiveHookReleaseWins`、净空规则 `HeadroomAllowsAirJump`、雷达射线表 `EmergencyRadarDirs` 与锚点过滤 `RadarTargetIsHookable`）单独放在 `avoid_decision.h` 里，可脱离游戏单测（§5.3、§11）。
 Basic / Legit / Blatant 在本次调用里把搜索全部算完（同步）；Fentbot / Pilot 是**分片规划器**，一次调用只推进一个有上限的切片，跨 tick 记住搜索状态，而且**不过门控 5**（§12.18）。
 `CAvoid::ApplyInput()` 的调用顺序被自检第 6 步钉死为 `RunLightweightProbe` → `RunSectorScan` → `pAgent->GetAction`。
 
 **5. 规划器与流水线都有明确的时间切片常量。**
 `PLANNER_STEPS_PER_TICK = 600`（每帧最多推进 600 个仿真 tick）、`NAV_WORK_PER_TICK = 20000`（每帧最多处理的网格瓦片数）、`SEARCH_COOLDOWN_TICKS = 10`（Fentbot 一轮结束后的冷却）、`PLAN_GUARD_TICKS = 6`（执行期的闭环护栏）、`LEGIT_DEADLINE_MS = 8.0`（Legit 的墙钟护栏）、`LIGHT_FREEZE_MIN_SPEED = 1.5f`（浅冻豁免的速度门槛）：这六个集中在 `avoid_engine.cpp` 顶部的匿名命名空间常量区。
-另外六个是流水线与仲裁的固定窗口，定义在 `avoid_decision.h`：`PROBE_CHECK_TICKS = 10`、`PROBE_SAFE_TICKS = 7`、`SECTOR_SCAN_TICKS = 21`、`LEGIT_ARBITRATION_TICKS = 26`、`AUTO_DRAG_MAX_DIST = 380.0f`、`AUTO_DRAG_MIN_DIST = 16.0f`。详见 §3.5、§5.2、§5.3、§9。
+另外十一个是流水线、仲裁与 v5.1 救援的固定窗口，定义在 `avoid_decision.h`：`PROBE_CHECK_TICKS = 10`、`PROBE_SAFE_TICKS = 7`、`SECTOR_SCAN_TICKS = 21`、`LEGIT_ARBITRATION_TICKS = 26`、`AUTO_DRAG_MAX_DIST = 380.0f`、`AUTO_DRAG_MIN_DIST = 16.0f`、`HOOK_MAX_DISTANCE = 380.0f`、`AIR_JUMP_HEADROOM = 48.0f`、`AIR_JUMP_MIN_CLEARANCE = 32.0f`、`AIR_JUMP_MIN_GAIN_TICKS = 8`、`RADAR_MIN_SURVIVAL_TICKS = 10`（另有 `EMERGENCY_RADAR_RAYS = 5`）。详见 §3.5、§5.2、§5.3、§9。
 
 **6. 本地化是硬契约。**
 所有用户可见标签走 `BcLocalize()`，查询上下文固定为 `BestClient`（`localization.cpp:28-33`）。
 每个 `BcLocalize("…")` 的字面量必须在 `data/BestClient/languages/simplified_chinese.txt` **和** `russian.txt` 的 `[BestClient]` 上下文下存在同名 key。
 当前契约规模（写作时逐项复核）：5 个源文件共 **195** 个 key，两个语言文件各 **885** 条 `[BestClient]` 词条，缺失 **0**。自检脚本第 4 步会重新断言这件事，见 §8、§11。
 
-**7. 自检脚本是 `scripts/avoid_selfcheck.sh`（445 行），共 8 个块（7 步 + 6b）。**
-它先构建 `DDNet`，然后依次校验参数契约、参数接线、本地化、占位文案、引擎契约（含 v5.0 的流水线与仲裁断言）、瓦片编辑器与决策规则、HUD 接线与渲染顺序，最后构建并运行整个 `testrunner`（其中包含 17 条 Avoid 决策单测）。
+**7. 自检脚本是 `scripts/avoid_selfcheck.sh`，共 8 个块（7 步 + 6b）。**
+它先构建 `DDNet`，然后依次校验参数契约、参数接线、本地化、占位文案、引擎契约（含 v5.0 的流水线与仲裁断言，以及 v5.1 的三个救援机制、12 分支动作空间与八级级联顺序）、瓦片编辑器与决策规则、HUD 接线与渲染顺序，最后构建并运行整个 `testrunner`（其中包含 23 条 Avoid 决策单测）。
 动了这个模块的任何一行，跑它。每步断言什么见 §11。
 
 **8. 参考规格的位置与章节对应。**
 `docs/avoid/KRX_AVOID_REPRODUCTION_SPEC.md`：
-§2 = 参数矩阵（默认/极值），§3 = 数据结构与 `BLAgent`/`BLAvoid` 接口，§4.1 = 前向推演引擎（含 `0x270f`、冻结条件、death/tele 判定），§5 = 前置门控与预推演探针流水线（5.1 玩法黑名单、5.2 观战与有效性、5.3 已冻结、5.4 AFK 状态机、5.5 10-Tick 探针、5.6 扇区扫描），§6 = Basic，§7 = Blatant（7.1 kick-in 迟滞、7.2 候选空间、7.3 Auto Drag、7.4 解冻块逃逸、7.5 并发贪心、7.6 NSIF 与 Track Point 调度）；§8 = Legit（8.1 MCTS 节点、8.2 UCT 公式、8.3 MCTS 与 26-Tick 后验增益仲裁），§9 = Fentbot（9.1 档位表、9.2 流场点积 1750.0f），§10 = Tile Editor（数据结构、ClearAll、AutoFinish、AutoTunnels、鼠标绘制、流场重算），§11 = Pilot，§12 = 输入拦截管线与组件集成，§14 = 行为一致性验证清单（100 分基准的 6 条）。
+§2 = 参数矩阵（默认/极值），§3 = 数据结构与 `BLAgent`/`BLAvoid` 接口，§4.1 = 前向推演引擎（含 `0x270f`、冻结条件、death/tele 判定），§5 = 前置门控与预推演探针流水线（5.1 玩法黑名单、5.2 观战与有效性、5.3 已冻结、5.4 AFK 状态机、5.5 10-Tick 探针、5.6 扇区扫描、**5.7 提前松勾抢断、5.8 净空二段跳、5.9 上半球出勾雷达**），§6 = Basic，§7 = Blatant（7.1 kick-in 迟滞、7.2 全笛卡尔候选空间、7.3 Auto Drag、7.4 解冻块逃逸、7.5 并发贪心、7.6 NSIF 与 Track Point 调度）；§8 = Legit（8.1 MCTS 节点、8.2 UCT 公式、8.3 MCTS 与 26-Tick 后验增益仲裁），§9 = Fentbot（9.1 档位表、9.2 流场点积 1750.0f），§10 = Tile Editor（数据结构、ClearAll、AutoFinish、AutoTunnels、鼠标绘制、流场重算），§11 = Pilot，§12 = 输入拦截管线与组件集成，§14 = 行为一致性验证清单（100 分基准的 6 条）。
 本实现与它的字面差异是**有意为之**，逐条列在 §12。
 
 ---
@@ -118,8 +118,8 @@ Avoid::BLAgent (avoid_engine.h)
 | `src/game/client/components/bestclient/avoid_tile_editor.h` / `.cpp` | 规格 §10 的瓦片编辑器：Tunnel / Finish 两个集合、`Revision()`、`Mark*` / `Erase` / `Interact` / `AutoFinish` / `AutoTunnels` / `ClearAll` | 全文（70 / 128 行） |
 | `src/game/client/components/bestclient/menus_avoid.cpp` | Avoid 设置页：状态栏、代理选择、共用框、每个代理的参数页签、Tile Editor 页签、Defaults；文件开头的三个排版帮手（`AvoidHintHeight` / `AvoidHint` / `AvoidHintBottom`） | 按页签名与 `PANEL_*` 枚举检索 |
 | `src/engine/shared/config_variables_bestclient.h` | 56 个 `bc_avoid_*` 的唯一定义处 | 616–677 |
-| `src/test/avoid_decision_test.cpp` | 17 条决策规则回归测试（含“根子节点访问次数并列时不得选到左侧子节点”、探针阈值、扇区角度与 26-Tick 增益仲裁） | 全文（428 行） |
-| `scripts/avoid_selfcheck.sh` | 8 块回归自检 | 全文（445 行） |
+| `src/test/avoid_decision_test.cpp` | 23 条决策规则回归测试（含“根子节点访问次数并列时不得选到左侧子节点”、探针阈值、扇区角度、26-Tick 增益仲裁，以及 v5.1 的 12 分支笛卡尔积、提前松勾判定、净空规则与雷达射线） | 全文 |
+| `scripts/avoid_selfcheck.sh` | 8 块回归自检 | 全文（513 行） |
 | `docs/avoid/KRX_AVOID_REPRODUCTION_SPEC.md` | 参考实现规格（行为与常量的出处） | 全文（1658 行） |
 
 ### 2.3 接线点（改动这几个文件就等于改这个模块的行为）
@@ -348,7 +348,7 @@ CAvoid::EInputResult CAvoid::FinishInput(bool Drives, CNetObj_PlayerInput *pInpu
 * **`m_LastGate` 与 `PRE_*` 枚举**：`CAvoid::EPreActivation` 的取值 `PRE_OK / PRE_GAMEMODE / PRE_INACTIVE / PRE_FROZEN / PRE_AFK / PRE_SAFE` 就是上表六行的判定结果（`PRE_OK` = 流水线可以继续），`CAvoid::PreActivationName()` 把它们翻译成 HUD `Plan:` 行与 `avoid_status` 里的短文本；`m_LastGate` 保留上一 tick 的值，用来只在“刚刚进入 AFK”时打印一次提示。
 * **扇区扫描的改写本身算一次接管**：如果代理最终没有 `m_Active`，而准星确实被扫描改写过（`CrosshairLocked`），调度器会把这一 tick 标成 `Action.m_Active = 1`、reason `sector scan locked the crosshair`，好让这个新准星真的发到服务端（§5.2）。
 * **门控 5 只拦 Basic / Legit / Blatant**：`ProbeGated = AgentId != AGENT_FENTBOT && AgentId != AGENT_PILOT`；两个分片规划器保留自己的每帧预算与 `PLAN_GUARD_TICKS` 护栏（这是有意偏离，见 §12.18）。
-* **扇区扫描对五个代理都跑**：它在探针之后、代理之前，与选中的代理无关；Fentbot / Pilot 也会拿到被改写过的准星（它们不区分这个准星是不是扫描改写的，只当作这一 tick 的准星用）。**阶段 2 不等于 Blatant 的瞄准层**：阶段 2 只决定“代理接下来用哪个准星”，而 Blatant 瞄准层里的 FOV 扫描是 `bc_avoid_auto_aim` / `bc_avoid_aim_assist` 的采样源，两者职责不同、会各自扫一遍（§5.2 第 5 点、§9.1）。
+* **扇区扫描对五个代理都跑**：它在探针之后、代理之前，与选中的代理无关；Fentbot / Pilot 也会拿到被改写过的准星（它们不区分这个准星是不是扫描改写的，只当作这一 tick 的准星用）。**阶段 2 不等于 Blatant 的瞄准层**：阶段 2 只决定“代理接下来用哪个准星”，而 Blatant 瞄准层里的 FOV 扫描是 `bc_avoid_auto_aim` / `bc_avoid_aim_assist` 的采样源，两者职责不同、会各自扫一遍（§5.2 第 7b 点、§9.1）。
 
 ---
 
@@ -490,35 +490,49 @@ Basic 的 `m_AvoidDeath` 恒为 `true`——它一直把死亡瓦片算作危险
 
 | 项 | 内容 |
 | :--- | :--- |
-| 复现的参考章节 | spec §7（7.1 kick-in 迟滞、7.2 候选空间、7.3 Auto Drag、7.4 解冻块逃逸、7.5 并发贪心、7.6 NSIF 与 Track Point 调度） |
+| 复现的参考章节 | spec §7（7.1 kick-in 迟滞、7.2 全笛卡尔候选空间、7.3 Auto Drag、7.4 解冻块逃逸、7.5 并发贪心、7.6 八级级联与 NSIF/Track Point 调度）以及 §5.7 / §5.8 / §5.9（v5.1 的提前松勾、净空二段跳、上半球出勾雷达，它们排在级联的第 2 / 4 / 5 级） |
 | 危险开关 | `m_AvoidFreeze = true` + `m_AvoidDeath = m_BlatantDeath` + `m_AvoidTeles = m_BlatantTeles` + `m_AvoidUnfreeze = m_BlatantUnfreeze` / `m_UnfreezeTicks = m_BlatantUnfreezeTicks` |
 | 读取的参数 | `bc_avoid_kick_in_ticks`、`bc_avoid_blatant_check_ticks`、`bc_avoid_blatant_direction`、`bc_avoid_blatant_hook`、`bc_avoid_blatant_teles/death/unfreeze/unfreeze_ticks`、`bc_avoid_nsif`、`bc_avoid_track_point`、`bc_avoid_safe_aim_tracking`、`bc_avoid_auto_drag`、`bc_avoid_aimbot`、`bc_avoid_aimbot_fov`、`bc_avoid_aimbot_segments`、`bc_avoid_auto_aim`、`bc_avoid_aim_assist`、`bc_avoid_player_prediction`、`bc_avoid_draw_path` |
 | 跨 tick 状态 | `m_TrackPointValid` / `m_TrackPointPos`（锁定瞄准点）、`m_SavedSafeSequence`（NSIF 缓存）。`OnReset()` 清空三者 |
 
-执行顺序就是 spec §7.6 的六级级联（迟滞 → Auto Drag → 解冻块逃逸 → 并发贪心 + 瞄准层 → NSIF → 尽力而为），外加最前面的 track point 刷新。自检第 6 步断言前五段的先后顺序，并断言贪心那一轮是并发的。
+执行顺序就是 spec §7.6 的八级级联（迟滞 → **提前松勾抢断** → Auto Drag → **净空二段跳自救** → **上半球出勾雷达** → 解冻块逃逸 → 全笛卡尔并发贪心 + 瞄准层 → NSIF → 尽力而为），外加最前面的 track point 刷新。第 2、4、5 级（提前松勾、二段跳、雷达）都是**推演通过就立刻接管返回**的救援级，它们排在搜索之前：这三条正是 v5.1 之前缺掉的自救路径，排在搜索之后等于让贪心搜索先替它们做决定。自检第 6 步断言这八段的先后顺序，并断言贪心那一轮是并发的。
 
 0. **track point**：开着 `bc_avoid_track_point` 时，用 `IsHookable()` 沿玩家当前准星方向做钩索射线；命中可钩瓦片就把命中点记成 `m_TrackPointPos`（`m_TrackPointValid = true`）。关掉该参数时立即失效。有效时写进 `Out.m_TrackPoint`（HUD 世界覆盖层用）。它在迟滞之前刷新，所以“这一 tick 让路”不会让锁定的瞄准点过期。
 1. **kick-in 迟滞**：用 `bc_avoid_kick_in_ticks`（默认 26）推演玩家原输入。返回 9999 → 清空 `m_SavedSafeSequence`、`m_Active = 0`、reason `"player input safe"`、`Out.m_SurvivalTicks = KickInTicks`。只要玩家自己能活够 kick-in 窗口，机器人就让路，即使 check-ticks 窗口更长的搜索能找到别的活路。
    紧跟其后还有一次**刹车余量**判定：玩家这一 tick 在横向移动（`m_Direction != 0`）时，用 `SimulatePlan()` 推演“第 0 tick 照玩家的输入、之后刹车（`m_Direction = 0`）”这两段、窗口同样取 kick-in ticks；如果整窗安全，也走“让路”分支（清缓存、reason `"player input safe"`、`Out.m_SurvivalTicks = KickInTicks`）。它的意思是**危险还在几格之外、玩家有完整的刹车距离**，此时不该抢方向。
-2. **Auto Drag（勾队友救命）**：`bc_avoid_auto_drag` 打开时，按 client id 从小到大遍历所有其他 tee，跳过距离 `> AUTO_DRAG_MAX_DIST(380px)` 或 `< AUTO_DRAG_MIN_DIST(16px)` 的，对第一个通过距离筛选的用 `BuildApproachInput(..., Hook = true)` 造一个“朝它走并勾住”的候选（准星指向目标的原始偏移，方向按 ±12 px 死区取 −1/0/1），并用 `bc_avoid_blatant_check_ticks` 推演它；只要返回 9999 就立刻接管并返回：`m_AimTarget` 指向那名队友，reason `"auto drag a teammate"`。
-   注意这不是“挑最近的那个”：射程规则只决定谁进入候选，**第一个推演通过的人赢**，所以 client id 较小、同样可救的队友优先。推不成不消耗任何状态，继续走第 3 步；它的瞄准仍会作为瞄准候选出现在第 4b 步。
+2. **提前松勾抢断（Preemptive Hook Release，无专属开关）**：角色正挂在钩索上（`Core()->m_HookState == HOOK_GRABBED`）**或**玩家正按着钩索键时，用同一个 check 窗口做两路推演——分支 A 把 `m_Hook = 1`（照玩家继续按），分支 B 把 `m_Hook = 0`（立刻脱钩）。判定走纯函数 `PreemptiveHookReleaseWins(Keep, Release, CheckTicks)`：先把两边的 9999 折算成窗口长度，再要求 `Keep < CheckTicks && Release > Keep`。命中就把输入的 `m_Hook` 强制置 0 并立刻返回（reason `"release the hook before the swing"`）：这一次接管**只改钩索这一个比特**，方向与准星一概不动。
+   物理含义（规格 §5.7，汇编 `0x1403286f0`–`0x1403289e0`）：钟摆越过低点前后继续按钩，向心力与重力会把角色拖进下方的黑水；而在切线拐点脱钩，摆动的速度就变成水平飞行。没有这一步，一个“死按右键不放”的玩家只能看着自己被荡进冻结池——这正是 v5.0 之前的行为。
+
+3. **Auto Drag（勾队友救命）**：`bc_avoid_auto_drag` 打开时，按 client id 从小到大遍历所有其他 tee，跳过距离 `> AUTO_DRAG_MAX_DIST(380px)` 或 `< AUTO_DRAG_MIN_DIST(16px)` 的，对第一个通过距离筛选的用 `BuildApproachInput(..., Hook = true)` 造一个“朝它走并勾住”的候选（准星指向目标的原始偏移，方向按 ±12 px 死区取 −1/0/1），并用 `bc_avoid_blatant_check_ticks` 推演它；只要返回 9999 就立刻接管并返回：`m_AimTarget` 指向那名队友，reason `"auto drag a teammate"`。
+   注意这不是“挑最近的那个”：射程规则只决定谁进入候选，**第一个推演通过的人赢**，所以 client id 较小、同样可救的队友优先。推不成不消耗任何状态，继续走第 4 步；它的瞄准仍会作为瞄准候选出现在第 7b 步。
    Auto Drag **不受 `bc_avoid_aimbot` 控制**（它是救援步骤，不是瞄准辅助），也**不额外要求 `bc_avoid_player_prediction`**：推演里队友是否实体由该参数决定，关掉时钩中也不会被拉扯，救援候选自然测不出 9999（§12.15）。
-3. **解冻块逃逸**：`bc_avoid_blatant_unfreeze` 打开时，用 `FindNearestUnfreezeTile()` 在 `bc_avoid_blatant_unfreeze_ticks`（这里当半径用，单位是瓦片；四邻 BFS 逐层扩散、不穿实心、不检查起点格）内找最近的 `TILE_UNFREEZE` 中心；找到就按“勾索 / 不勾索”两种候选各推演一次（`{true, false}` 顺序，钩索优先），命中 9999 → 接管、`m_AimTarget` 指向解冻块、reason `"escape to an unfreeze tile"`。
+4. **净空二段跳自救（Emergency Air Jump）**：规格 §5.8。三个进入条件缺一不可：
+   * `CanUseAirJump()`：`!(Core()->m_Jumped & 2)` 且 `!IsGrounded()`。位 2 才是“空中跳已经用完”（角色脚下变黑）的那个标志；位 1 只表示“当前这次按键已经触发过一跳”，用它判会误判成“没有二段跳”。
+   * `CheckHeadroomClearance()`：从角色位置向正上方投一条长 `AIR_JUMP_HEADROOM = 48.0f` 的射线，再取正上方 `AIR_JUMP_MIN_CLEARANCE = 32.0f`（正好一格）处的瓦片；命中点距离不足一格、或命中点 / 正上方是致死或冻结瓦片就否决。规则本身是纯函数 `HeadroomAllowsAirJump(SHeadroomProbe)`：顶着一格外的天花板或冻结顶棚起跳，等于自己把角色送回去。
+     取瓦片用的是 `ProbeTileAt()` 而不是 `GetCollisionAt()`：实心碰撞层只会报告四种**实心**瓦片，冻结不在其中——只看碰撞层的话，冻结顶棚、以及带冻结前景层的墙都会被判成“可以跳上去”，正是规格里那几个位掩码想拦而没拦住的情况。`ProbeTileAt()` 先把游戏层 / 前景层 / 开关层的原始编号折进来，规则才看得到 `TILE_FREEZE` / `DFREEZE` / `LFREEZE` / `DEATH`；雷达的锚点判断（`RadarTargetIsHookable(ProbeTileAt(...))`）用的是同一个函数。
+   * 增益门槛：把 `m_Jump = 1`（二段跳冲量 `m_Vel.y = -m_Tuning.m_AirJumpImpulse`）注入 `{-1, 0, 1}` 三个方向，取存活最久者，要求它比“什么都不做”**严格更久**且 `>= AIR_JUMP_MIN_GAIN_TICKS = 8`。
+   命中即接管并返回（reason `"spend the air jump"`）。它是在 12 分支动作空间**之外**再单独保一道：即使搜索因为平局规则（并列时先保钩索、再保方向，跳跃维不参与偏好）没选跳跃，这一步也会先把二段跳花在救命上。
+5. **上半球天花板 / 边缘墙体应急雷达（Emergency Upper Hemisphere Radar）**：规格 §5.9。把 `EmergencyRadarDirs()` 的五条射线——正上 `(0, -1)`、左上 `(-0.7071, -0.7071)`、右上 `(0.7071, -0.7071)`、左侧 `(-1, -0.2)`、右侧 `(1, -0.2)`——从角色位置向外投 `HOOK_MAX_DISTANCE = 380.0f`（钩索最大有效延伸），**完全无视玩家准星**；命中点瓦片必须通过纯函数 `RadarTargetIsHookable()`（不是 `TILE_FREEZE` / `DFREEZE` / `LFREEZE` / `DEATH` / `NOHOOK`）。命中就构造候选：准星 = 命中点相对角色的原始偏移、`m_Hook = 1`，再按“中立 → 朝锚点方向”（`{0, Lean}`，规格 §5.9 的写法）各推演一次取存活最久者，`BestSurvival > RADAR_MIN_SURVIVAL_TICKS = 10` 就接管并返回（reason `"hook the ceiling above"`，`m_AimTarget` 指向锚点）。
+   为什么必须有这一层：阶段 2 的扇区扫描只在玩家准星 ±`bc_avoid_aimbot_fov`/2 之内扫，鼠标正朝下看着黑水时永远扫不到头顶的天花板与身后的边缘墙。这条雷达是那种视角下唯一的出路。
+   **瓦片判定按编号比较**：参考写法是把 `TILE_DEATH` 与 `TILE_FREEZE` 或起来再按位与（`2 | 9 = 11`），套在瓦片编号上会连带否掉 1（实心）与 11（解冻块）——正好是雷达要找的墙和逃生要踩的解冻块。本实现用 `IsLethalOrFreezingTile()` / `RadarTargetIsHookable()` 逐编号比较（§12.1）。
+6. **解冻块逃逸**：`bc_avoid_blatant_unfreeze` 打开时，用 `FindNearestUnfreezeTile()` 在 `bc_avoid_blatant_unfreeze_ticks`（这里当半径用，单位是瓦片；四邻 BFS 逐层扩散、不穿实心、不检查起点格）内找最近的 `TILE_UNFREEZE` 中心；找到就按“勾索 / 不勾索”两种候选各推演一次（`{true, false}` 顺序，钩索优先），命中 9999 → 接管、`m_AimTarget` 指向解冻块、reason `"escape to an unfreeze tile"`。
    这一步用一份临时拷贝的 `SSimFlags` 推演（`m_AvoidUnfreeze = false`、`m_UnfreezeTicks = 0`）：搜索把“前 N tick 踩到解冻块”当危险，而逃生恰恰要踩上去，所以逃生候选**豁免**这条规则（§12.14）。
-4. **并发贪心搜索**：
-   * 候选来自 `avoid_decision.h` 的 `BuildBlatantCandidates()`：按 spec §7.2（`0x14032e530`）的**动态 5 分支表**——分支由玩家当前的 `m_Direction` 与 `m_Hook` 决定（`(方向<0, 钩索=0)` / `(0,0)` / `(>0,0)` / `(<0,1)` / `(0,1)` / `(>0,1)` 六选一），每个分支给出 5 个 `(方向, 钩索)` 备选，顺序即优先级；`bc_avoid_blatant_direction` / `bc_avoid_blatant_hook` 关掉时把对应维度与玩家当前值不符的候选**过滤掉**（不是替换成“保持玩家当前值”的合成维度）。零向量准星在入环前归一化成 `m_TargetY = -1`。
-     例：玩家 `(1, 0)`（向右走）→ `(0,0) 刹车 → (-1,0) 左转 → (1,1) 勾右 → (0,1) 勾中 → (-1,1) 勾左`；玩家 `(0, 0)` → `(-1,0) → (1,0) → (0,1) → (-1,1) → (1,1)`。
+7. **并发贪心搜索**：
+   * 候选来自 `avoid_decision.h` 的 `BuildBlatantCandidates()`：按 spec §7.2 的**全笛卡尔积** `Dirs[3] = {0, -1, 1} × Hooks[2] = {0, 1} × Jumps[2] = {0, 1}`，最多 **12** 条分支。v5.0 的“按玩家当前输入六选一的动态 5 分支优先级表”（旧 spec §6.2 / `0x14032e530`）已被 v5.1 取代——那张表里**根本没有跳跃维度**，于是空中的自救只能靠玩家自己按着空格。
+     * 跳跃那一维只在 `CanAirJump` 为真时打开，判据是 `CanUseAirJump(pWorld, LocalId)`：`!(Core()->m_Jumped & 2)`（位 2 = 空中跳已用完）且 `!IsGrounded()`。关闭时 `m_Jump` **保持玩家当前值**，不会把跑动中的地面跳清掉。
+     * `bc_avoid_blatant_direction` / `bc_avoid_blatant_hook` 关掉时，把对应维度的循环数降到 1，也就是**保持玩家当前值**（与 v5.0 的“过滤掉不符的候选”不同：过滤在只剩一维时会返回空集合，而笛卡尔积永远至少给出玩家自己的那一支）。
+     * 嵌套顺序就是规格顺序，也就是平局规则：`(0,0,0) → (0,0,1) → (0,1,0) → (0,1,1) → (-1,0,0) → … → (1,1,1)`。零向量准星在入环前归一化成 `m_TargetY = -1`。
    * 整个候选环一次交给 `SimulateBranchesParallel()`：每个候选用 `bc_avoid_blatant_check_ticks` 推演（`Survival` 取“9999 → CheckTicks”），**单候选时直接内联**，多候选时每个候选一个 `std::async(std::launch::async)`（spec §7.5，`0x14032eb50`）。线程创建抛 `std::system_error` 时先把已经发出的 future `wait()` 掉，再在本线程**串行重做整轮**，不会丢决策（§9.2）。
    * 结果按候选顺序喂给同一个 `Consider()`：`Survival > BestSurvival` 才替换；分数并列时依次比较“候选是否保持玩家的钩索”“候选是否保持玩家的方向”，都保持则保留更早的那个。因此**枚举顺序就是平局规则**。`BestSurvival` 的初值是 `KickSafety`（玩家原输入在 kick-in 窗口里的实际存活帧数），`BestAction` 的初值是玩家原输入。
    * 任一候选返回 9999 就置 `FoundSafe = true`。
-5. **内部瞄准层**（`!FoundSafe && bc_avoid_aimbot`）：它只**产生候选**，不直接决定动作。
+7b. **内部瞄准层**（`!FoundSafe && bc_avoid_aimbot`）：它只**产生候选**，不直接决定动作。
    * 固定候选：track point（`bc_avoid_track_point` 且 `m_TrackPointValid`；开 `bc_avoid_safe_aim_tracking` 时先把该瞄准 `hook = 1` 塞进玩家输入、用同一个 check 窗口推演一次，**只有返回 9999 才算可用**，否则这个候选直接被丢掉）；Auto Drag 的瞄准（`bc_avoid_auto_drag` 时取 380 px 内、16 px 外**最近**的 tee，距离并列时留下 client id 较大的那个）。固定候选无条件入选。
    * FOV 扫描：本层**自己扫一遍**这段视野，即使调度器刚刚在阶段 2 扫过同一片——两者职责不同：阶段 2 改写的是“代理接下来用哪个准星”，本层的扫描是 `bc_avoid_auto_aim` / `bc_avoid_aim_assist` 的采样源，跳过它这两个参数就没有任何效果。以 `Ctx.m_Input` 的准星角为中心（这就是**阶段 2 改写之后**的准星，所以两次扫描的扇区中心不一定相同）、`bc_avoid_aimbot_fov`（10–360°）为扇角、`bc_avoid_aimbot_segments` 条采样，**每条**先 `IsHookable()` 过滤，再对命中的方向做一次 `hook = 1`、长度为 check 窗口的探针（这个采样是 `Segments` 条、不是阶段 2 的 `Segments + 1` 条，采样点用 `Segment / (Segments - 1)` 均匀铺满扇角）。`bc_avoid_auto_aim` 选“探针存活最久”的那条，`bc_avoid_aim_assist` 选“探针整窗安全且离准星最近”的那条（比较的是扇区相对准星的偏移，`|Offset|`，必要时折算成 `2π - |Offset|`）；两者可以同时入选，重复方向由后面的 `AddAim` 去重。
      代价：`bc_avoid_aimbot` 打开时，一个危险 tick 会有**两次** FOV 扫描（阶段 2 的 `(Segments + 1) × 21` 帧 + 本层的 `≤ Segments` 条可钩射线 × check 窗口），§9.1 的预算表把两者都算进去了。
    * `AddAim` 用 `dot > 0.9999f` 去重，避免为同一个方向重复付费。
-   * 最后对每个入选瞄准 × 候选环里的每个动作各推演一次，走的还是 `Consider(..., FromAimbot = true)`：**生存搜索裁决一切**，瞄准永远不会让机器人比普通候选更不安全。`Out.m_AimTarget` 也只在真正采纳了瞄准候选时才发布（reason 变成 `"hook the safe aim"` / `"aim clear of the hazard"`）。关掉 `bc_avoid_aimbot` 时整层静默：track point 只剩 HUD 覆盖层那一个点，Auto Drag 只剩第 2 步的救援动作。
-6. **NSIF（保留式回放）**：`FoundSafe` → 先清空再压入 `BestAction`（缓存里因此只有一步）；否则当 `bc_avoid_nsif` **或** `bc_avoid_track_point` 打开且缓存非空时 → 取出 `front()`；**只有长度大于 1 时才 `erase(begin())`**，长度为 1 时保留它（否则“必死局”的第二个 tick 就没东西可发了，§12.20）。然后用同一个 check 窗口重推它来得到**真实的**存活 tick（不伪造 9999）并置 `UsedFallback = true`。
-7. **尽力而为**：gate 是 `BestSurvival > KickSafety`——候选（含 NSIF 回放）必须比玩家当前输入**严格活得更久**才接管。这正是“必死局里也要活得最久”的语义：`<= KickSafety` 时玩家保留自己的输入，走 `else` 分支给出 reason `"player input safe"` 与 `Out.m_SurvivalTicks = KickSafety > 0 ? KickSafety : BestSurvival`（Blatant **不再**产生 `"no safer plan"`）。
+   * 最后对每个入选瞄准 × 候选环里的每个动作各推演一次，走的还是 `Consider(..., FromAimbot = true)`：**生存搜索裁决一切**，瞄准永远不会让机器人比普通候选更不安全。`Out.m_AimTarget` 也只在真正采纳了瞄准候选时才发布（reason 变成 `"hook the safe aim"` / `"aim clear of the hazard"`）。关掉 `bc_avoid_aimbot` 时整层静默：track point 只剩 HUD 覆盖层那一个点，Auto Drag 只剩第 3 步的救援动作。
+8. **NSIF（保留式回放）**：`FoundSafe` → 先清空再压入 `BestAction`（缓存里因此只有一步）；否则当 `bc_avoid_nsif` **或** `bc_avoid_track_point` 打开且缓存非空时 → 取出 `front()`；**只有长度大于 1 时才 `erase(begin())`**，长度为 1 时保留它（否则“必死局”的第二个 tick 就没东西可发了，§12.20）。然后用同一个 check 窗口重推它来得到**真实的**存活 tick（不伪造 9999）并置 `UsedFallback = true`。
+9. **尽力而为**：gate 是 `BestSurvival > KickSafety`——候选（含 NSIF 回放）必须比玩家当前输入**严格活得更久**才接管。这正是“必死局里也要活得最久”的语义：`<= KickSafety` 时玩家保留自己的输入，走 `else` 分支给出 reason `"player input safe"` 与 `Out.m_SurvivalTicks = KickSafety > 0 ? KickSafety : BestSurvival`（Blatant **不再**产生 `"no safer plan"`）。
     接管时 `Out.m_Input = BestAction`、`m_Active = 1`、`Out.m_SurvivalTicks = BestSurvival`（NSIF 回放时就是刚测出来的真实值）；reason 优先级为 NSIF（`"NSIF: replay saved safe input"`）→ 瞄准变化（`"hook the safe aim"` / `"aim clear of the hazard"`）→ 钩索变化（`"hook to safety"` / `"release hook"`）→ 方向（`"brake before hazard"` / `"steer away from hazard"`）。路径只在 `bc_avoid_draw_path` 且非 NSIF 回放时重算。
     代码里那段注释（`BestSurvHook0` 一类的保护性否决）说明了这里**没有**额外的保守护栏：一旦门控 5 放行，玩家输入在 check 窗口内就是会死的，任何“为了保护玩家输入而取消救援”的分支都正好否掉算出来的活路（§12.21）。
 
@@ -555,10 +569,12 @@ Heuristic = DirScore + HookScore + LifeScore          // WEIGHT_SCALE = 0.01f
 1. **Selection**：从根往下，选 `Score` 最大的子节点；`Score = Exploitation + Exploration + Heuristic(child)`，其中 `Exploitation = m_TotalValue / m_Visits`，`Exploration = ExplorationC × sqrt(log(max(1, parentVisits)) / childVisits)`，`ExplorationC = bc_avoid_legit_exploration`（整数直接当 double 用）。未访问过的子节点得 `3.402823466e+38`（FLT_MAX），保证每个子节点至少被走一次。**终局节点的启发项按 0 计**（`m_IsTerminal ? 0.0 : Heuristic(...)`，对应 `0x14033838d`）。
 2. **Expansion**：当前节点非终局且 `m_Visits > 0` 时调用 `BuildLegitCandidates()`（`avoid_decision.h`）展开，然后用**全局 `rand()`** 随机挑一个孩子继续（`rand() % 子节点数`）。展开顺序就是 spec §8.3 的顺序，也是本版修 bug 的关键之一：
    * `bc_avoid_legit_direction` 打开时先出 **hook = 0 环**：`m_Direction` 依次取 `{-1, 0, 1}`，`m_Hook` 固定 0（若 `bc_avoid_legit_hook` 关掉则保持父节点的钩索状态）；
-   * 再出 **hook = 1 环**：`m_Direction` 依次取 `{-1, 0, 1}`，`m_Hook = 1`；
+   * **空中二段跳维度（v5.1）**：`CanAirJump` 为真时每个方向的 hook = 0 候选出**两条**，`m_Jump` 依次取 `{0, 1}`；否则 `m_Jump` **继承父节点**（详见 §12.22）。`CanAirJump` 在整棵树开始搜索之前算一次，判据是 `CanUseAirJump()` **且** `CheckHeadroomClearance(..., AIR_JUMP_HEADROOM)`（与 Blatant 的第 7 级不同：Legit 连净空一起要求，规格 §8.3 就是这么写的），世界在搜索期间不动，所以一次判定对整个树都成立；
+   * 再出 **hook = 1 环**：`m_Direction` 依次取 `{-1, 0, 1}`，`m_Hook = 1`，`m_Jump` 保持父节点的值（规格如此，钩索环不带跳跃维度）；
    * 只开钩索时（方向关、钩索开）退化成只改钩索的两个候选，`m_Hook` 取 `{0, 1}`；
    * 每个候选在入树前做瞄准归一化：`TargetX == 0 && TargetY == 0` 时改成 `TargetY = -1`（Teeworlds 协议不允许零向量）。这个顺序让**第一个创建的子节点永远是 `m_Direction = -1`、`m_Hook = 0`**，§5.3 末尾的历史 bug 正是踩在这一点上。
-   Basic 用的是 `{0, -1, 1}`，Blatant 用的是按玩家输入动态选择的 5 分支表（§5.2），三套顺序不可互换。
+   有空中二段跳时一次展开是 **9** 个子节点（3 方向 × 2 跳跃 + 3 钩索），没有时仍是 6 个。
+   Basic 用的是 `{0, -1, 1}`，Blatant 用的是 12 分支笛卡尔积（§5.2），三套顺序不可互换。
 3. **Rollout**：`SimulateCandidate(m_pClient, pWorld, pCurr->m_Action, CheckTicks, Flags)`；`m_LifespanTicks = (9999 ? CheckTicks : Survival)`；奖励 `Reward = (double)m_LifespanTicks`（对应 `0x14033904b`-`0x140339075`，与启发式的量纲一致）；**只有非根节点且 `Survival <= 0` 时**才把该节点标记为终局（`0x140339054`；根节点永远不能变成终局，否则第 1 轮迭代就跳过展开、树再也长不出来）。
 4. **Backpropagation**：沿父链把 `m_Visits++` 与 `m_TotalValue += Reward`；**终局节点把自己的 `m_TotalValue` 直接置 0**，不再累积奖励（对应 `0x140338ee0` / `0x140338220`）。
 
@@ -571,6 +587,8 @@ Heuristic = DirScore + HookScore + LifeScore          // WEIGHT_SCALE = 0.01f
 * 全部子节点都没访问过 → 返回 −1，此时**不接管**：什么都没测到就不动玩家的输入（reason `"search budget reached"`（护栏命中）或 `"player input safe"`）。
 
 **CVar 掩码（`0x140338ab4` / `0x140338ac6`）**：选中的动作不会整条照抄——`Override` 以玩家输入为底，只有 `bc_avoid_legit_direction` 打开时才写入候选的 `m_Direction`，只有 `bc_avoid_legit_hook` 打开时才写入候选的 `m_Hook`。瞄准永远不改。
+
+**提前松勾抢断（v5.1，规格 §8.3 第 4.5 步，汇编 `0x1403389ba` 的 `call 0x1403286f0`）**：在最终决策选出根子节点之后、26-Tick 仲裁之前，Legit 也会调用同一个 `CheckPreemptiveHookRelease()`（窗口取 `bc_avoid_legit_check_ticks`，默认 6）。命中就直接返回强制松勾的输入（reason `"release the hook before the swing"`），**根本不看** MCTS 选了什么：角色挂在钩索上、继续按钩会在窗口内触冻时，切线脱钩在构造上就是更优解，任何搜索结果都不该把它劝回来。注意这里的窗口是 Legit 自己的 check ticks，比 Blatant 的 26 帧短；荡水时更早、更有把握的抢断来自 Blatant（`bc_avoid_agent 2`），Legit 上想提前触发就调大 `bc_avoid_legit_check_ticks`（§12.23）。
 
 **26-Tick 后验增益仲裁**（`0x140338a0c`-`0x140338a68`，`avoid_decision.h` 的 `ArbitrationGain()` / `ArbitrationAllowsOverride()`）：掩码之后的候选必须在**固定 26 帧**（`LEGIT_ARBITRATION_TICKS`，不跟随 `bc_avoid_legit_check_ticks`）的窗口里比玩家原输入**多活至少 1 帧**才允许覆盖输入。两路推演用的是同一份 `SSimFlags`（同一套危险开关），并且先把 9999 折算成窗口长度（`ArbitrationSurvival`）再相减，否则减法没有意义。
 
@@ -1010,7 +1028,7 @@ const char *BcLocalize(const char *pStr)
 
 * 探针就是“安全状态 0 唤醒、满帧率”的全部来源：玩家原输入在 10 帧里活过 7 帧时，这一次 10 帧克隆就是这一 tick 的全部开销——MCTS、贪心环、瞄准扫描一次都不会被调用，输入一个比特都不改（§3.5）。
 * 探针判定余量不足之后，扇区扫描仍是**可选**的：两个开关都关时 `RunSectorScan()` 直接返回 `false`，一次推演都不做。
-* 阶段 2 与瞄准层会**各扫一遍** FOV（职责不同，§5.2 第 5 点）：`bc_avoid_aimbot` 打开时，一个危险 tick 的扫描成本是阶段 2 的 `(Segments + 1) × 21` 帧推演**加上**瞄准层的 `≤ Segments` 条可钩射线 × check 窗口探针；两者都随 `bc_avoid_aimbot_segments` 线性增长。
+* 阶段 2 与瞄准层会**各扫一遍** FOV（职责不同，§5.2 第 7b 点）：`bc_avoid_aimbot` 打开时，一个危险 tick 的扫描成本是阶段 2 的 `(Segments + 1) × 21` 帧推演**加上**瞄准层的 `≤ Segments` 条可钩射线 × check 窗口探针；两者都随 `bc_avoid_aimbot_segments` 线性增长。
 * Fentbot / Pilot 不过门控 5（§12.18），所以“安全时只有 1 次克隆”这句话对它们不成立：它们每 tick 花的是自己的分片预算（§9.5），只有闭环护栏那 1–2 次推演是固定开销。
 
 **代理本体（都在单次 `GetAction` 里把活干完）：**
@@ -1018,16 +1036,16 @@ const char *BcLocalize(const char *pStr)
 | 代理 | 每次决策的推演次数（上限） | 每次推演的 tick 数 | 备注 |
 | :--- | :--- | :--- | :--- |
 | Basic | 4（1 基线 + ≤3 候选） | 6（`BASIC_CHECK_TICKS`，写死） | 基线安全时 1 次就返回；候选命中 9999 立即 break |
-| Blatant | 1（kick-in）+ ≤1（刹车余量：两段计划）+ ≤63（Auto Drag，只对距离落在 380/16 px 之间的人推演）+ ≤2（解冻块逃逸：勾索 / 不勾索，命中即返回）+ ≤5（候选环，**并发**）+ ≤1（safe aim tracking 探针）+ ≤`aimbot_segments`（瞄准层内部的 FOV 探针，只有 `IsHookable()` 命中的采样才推演）+ ≤20（入选瞄准 ≤4 × 候选环 ≤5）+ ≤1（NSIF 回放）+ ≤1（画路径） | `kick_in_ticks` / `blatant_check_ticks`（≤50） | 瞄准层与两个救援步骤默认全关（`aimbot = 0`、`auto_drag = 0`、`blatant_unfreeze = 0`）时代理本体约 ≤9；把 `bc_avoid_aimbot_segments` 拉满 64、并打开 aimbot 与两个救援步骤时约 ≤160（代理之外还有阶段 2 的 `(Segments + 1) × 21` 帧）。任一候选返回 9999（`FoundSafe`）会跳过整个瞄准层 |
+| Blatant | 1（kick-in）+ ≤1（刹车余量：两段计划）+ **2（提前松勾，命中即返回）** + ≤63（Auto Drag，只对距离落在 380/16 px 之间的人推演）+ **≤4（二段跳：基线 1 + 三方向 3，命中即返回）** + **≤10（雷达：≤5 条射线 × 2 个倾靠方向，命中即返回）** + ≤2（解冻块逃逸：勾索 / 不勾索，命中即返回）+ **≤12（候选环，并发）** + ≤1（safe aim tracking 探针）+ ≤`aimbot_segments`（瞄准层内部的 FOV 探针，只有 `IsHookable()` 命中的采样才推演）+ ≤96（入选瞄准 ≤8 × 候选环 ≤12）+ ≤1（NSIF 回放）+ ≤1（画路径） | `kick_in_ticks` / `blatant_check_ticks`（≤50） | 瞄准层与三个可选救援步骤默认全关（`aimbot = 0`、`auto_drag = 0`、`blatant_unfreeze = 0`）时代理本体约 **≤21**；把 `bc_avoid_aimbot_segments` 拉满 64、并打开 aimbot 与两个可选救援步骤时约 ≤190（代理之外还有阶段 2 的 `(Segments + 1) × 21` 帧）。第 2/4/5 级一旦命中就立刻返回，后面的级联一次都不跑；任一候选返回 9999（`FoundSafe`）会跳过整个瞄准层 |
 | Legit | ≤ `legit_iterations`（默认 100，≤1000）+ 2（26-Tick 仲裁两路）+ ≤1（画路径） | `legit_check_ticks`（≤50），仲裁固定 26 | 每次迭代 1 次推演 + 建树/回传；受 8 ms 墙钟护栏限制（§9.4） |
 
 每推演一次就 `CopyWorldClean` 一份世界，这是本模块 CPU 占用的主要来源。Blatant 的瞄准层与两个救援步骤默认都是关的，把 `aimbot_segments` 调大之前先看 `Cost` 读数。
 
 ### 9.2 并发、线程开销与并发安全性（Blatant 的候选环）
 
-Blatant 第 4 步的候选环交给 `SimulateBranchesParallel()`（spec §7.5，`0x14032eb50`）：
+Blatant 第 7 步的候选环交给 `SimulateBranchesParallel()`（spec §7.5，`0x14032eb50`）：
 
-* 单候选直接内联在调用线程里跑（为一次克隆创建一个线程不划算）；多候选时每个候选取一个 `std::async(std::launch::async)`，`future` 在这一轮结束时析构，也就是**每次决策最多创建/销毁 5 个线程**（`BuildBlatantCandidates` 最多返回 5 条）。没有线程池，这是这一层唯一的额外系统开销。
+* 单候选直接内联在调用线程里跑（为一次克隆创建一个线程不划算）；多候选时每个候选取一个 `std::async(std::launch::async)`，`future` 在这一轮结束时析构，也就是**每次决策最多创建/销毁 12 个线程**（`BuildBlatantCandidates` 的笛卡尔积最多返回 3 × 2 × 2 = 12 条；v5.0 是 5 条）。没有线程池，这是这一层唯一的额外系统开销。
 * **失败回退**：`std::async` 抛 `std::system_error`（线程创建失败）时，代码先把已经发出的 future 全部 `wait()` 掉，再在调用线程里**串行重做整轮**。决策不会丢，结果与并发路径逐条一致，只是这一轮的墙钟变长。
 * **并发安全性的论证**（也写在代码注释里）：每个分支在自己的 `CForwardSim` 里 `CopyWorldClean` 出一份**独立**世界，只读共享的基世界；推演共用的碰撞数据、调参、地图数据都是只读的；`m_WorldConfig.m_PredictEvents = false` 保证推演不触发副作用；`CForwardSim` 只持有自己的世界 / 角色指针 / 碰撞指针 / 本地 client id，`SetPredictPlayers()` 也只清自己克隆的 `m_Core.m_apCharacters`。因此分支之间没有共享可写状态，**预测世界不接触任何客户端组件**。
 
@@ -1118,7 +1136,7 @@ Blatant 第 4 步的候选环交给 `SimulateBranchesParallel()`（spec §7.5，
 * 动作 B（贪心 + 钩索）：从高处落进狭长冻结池。
 * 必须看到：状态变 `ASSIST`，reason 出现 `hook to safety` / `release hook` / `brake before hazard` / `steer away from hazard`，`Override` 增长；开着 `bc_avoid_draw_path` 时能看到预测折线。
 * 动作 C（无解情形）：找一个所有候选都不比玩家原输入活得久的处境（例如已经贴在致死/冻结面上且没有任何方向能多撑一 tick）。
-* 必须看到：不接管、状态仍是 `WATCH`、玩家输入保持原样，reason 是 `player input safe`（Blatant 不再产生 `no safer plan`）——gate 是 `BestSurvival > KickSafety`（§5.2 第 7 点）。
+* 必须看到：不接管、状态仍是 `WATCH`、玩家输入保持原样，reason 是 `player input safe`（Blatant 不再产生 `no safer plan`）——gate 是 `BestSurvival > KickSafety`（§5.2 第 9 点）。
 * 动作 D（NSIF）：同一条命里先制造一次 `FoundSafe` 的接管（例如让它先躲开一次冻结），再落进无法全安全的必死局（规格 §14 第 5 条）。
 * 必须看到：状态徽章变红 `NSIF`，`Plan: NSIF: replay saved safe input`，计数器的 `nsif` 增长；`Safe` 显示的是**重新推演出来的真实存活 tick**（不是伪造的 9999）。
   注意：缓存里只有一步时它会被**保留**而不是消费掉，所以 NSIF 可以连续亮多个 tick，输入连续、不抽搐（§12.20）；`m_SavedSafeSequence` 会在重置、地图加载和 kick-in 让路分支里被清空，必须在**同一条命**里先攒到一次安全序列。另外，重放下来的那一步只有在比玩家当前输入活得更久时才会真的接管（§5.2 第 6/7 点）。
@@ -1131,7 +1149,7 @@ Blatant 第 4 步的候选环交给 `SimulateBranchesParallel()`（spec §7.5，
 * 动作 G（解冻块逃逸）：`bc_avoid_blatant_unfreeze 1`，把 `bc_avoid_blatant_unfreeze_ticks`（同时当作 BFS 半径）调到能覆盖最近解冻块的值，站在冻结前。
 * 必须看到：reason `escape to an unfreeze tile`、瞄准标记指向解冻块中心；把 `bc_avoid_blatant_unfreeze` 关掉后这条路径消失（普通候选里踩解冻块仍然算危险）。
 * 反向验证 1：在 Aimbot 页签关掉 `bc_avoid_aimbot`，回到 Settings 页签会看到琥珀色提示——此时 `bc_avoid_track_point` / `bc_avoid_safe_aim_tracking` 不再产生任何候选，Auto Drag 只保留救援动作本身。
-* 反向验证 2：只在“瞄准层算出了候选、但最终没有被采纳”的 tick 观察 `bc_avoid_draw_aimbot`：标记不会亮，因为 `m_AimTarget` 只在接管分支里发布（§5.2 第 7 点）。
+* 反向验证 2：只在“瞄准层算出了候选、但最终没有被采纳”的 tick 观察 `bc_avoid_draw_aimbot`：标记不会亮，因为 `m_AimTarget` 只在接管分支里发布（§5.2 第 9 点）。
 * 反向验证 3（阶段 2）：`bc_avoid_track_point 1` 或 `bc_avoid_aimbot 1` 打开时，危险 tick 的准星会先被扇区扫描改写；如果代理本身没有接管，reason 是 `sector scan locked the crosshair`，`bc_avoid_draw_aimbot 1` 下能看到那个被锁定的方向（§3.5）。
 
 ### 10.4 Fentbot
@@ -1220,11 +1238,11 @@ bind X toggle bc_avoid_enabled 1 0
 | 3 | `[3/7] every parameter is actually wired` | (a) 每个声明的参数要么名字、要么它的 `m_BcAvoidXxx` 成员必须出现在除头文件以外的 `src/**/*.cpp\|h` 里（“死参数”即失败）；(b) 每个参数必须能在 `menus_avoid.cpp` 里找到它的成员名，例外是 `bc_avoid_enabled` / `bc_avoid_agent`，它们必须分别出现 `Avoid.SetEnabled(` / `Avoid.SetAgent(`；(c) 恰好 6 张 defaults 表（每个代理一张 + 共用一张），每张非空、无重复、所有名字都已声明，并打印总条目数（当前 **56**） |
 | 4 | `[4/7] localization follows the client language` | 从 `avoid.cpp`、`avoid_engine.cpp`、`menus_avoid.cpp`、`menus_tas.cpp`、`hud_layout.cpp` 收集全部唯一的 `BcLocalize("…")` 字面量并断言数量 > 120（当前 **195**）；用与 `CLocalizationDatabase::Load` 同构的解析器读两个语言文件（上下文行、`== ` 行格式错误都会失败），然后断言每个 key 都以 `BestClient` 为上下文存在 |
 | 5 | `[5/7] no placeholder copy left in the module` + UI 排版契约 | (a) 脚本里硬编码的禁止词表（检索字面量为 `not implemented`、`Not implemented`、`尚未实现`、`Planned`、`planned`、`is missing`、`arrives with the agent`、`reserved for upcoming`）不得出现在 Avoid 相关文件的任何 `BcLocalize` 字面量里、不得出现在 `menus_avoid.cpp` 正文里、也不得作为语言文件里这些 key 的译文出现；注释不受限。(b) 排版契约：菜单里必须仍有 `SLabelProperties Props;` 与 `Props.m_MaxWidth = Rect.w;`（否则说明文字会被压到 5 px 下限）、必须仍调用 `AvoidHintBottom(` 与 `TextBoundingBox(`（否则面板不再为换行后的文案预留高度）；`AVOID_TEXT_VALUE` 与 `SIMULATION_SAFE_CONSTANT` 必须**不**出现在菜单里（前者已删除，后者对应的分支永远不会运行） |
-| 6 | `[6/7] engine contract` | 对源码做字符串断言，分五组：(a) 模拟器：`SimulateCandidate` + `CopyWorldClean` + `SIMULATION_SAFE_CONSTANT = 9999`；**危险判定**：存在 `== TILE_DEATH` 且**不存在** `& TILE_DEATH`（位与会把 finish / unfreeze 当死亡格），冻结条件必须是 `pChar->m_FreezeTime > 0 \|\| pChar->m_FrozenLastTick \|\| pCore->m_DeepFrozen` 且**不得**出现 `m_Core.m_IsInFreeze \|\| pCore->m_DeepFrozen`。(b) 决策规则（现在全部在 `avoid_decision.h`）：流水线与仲裁的固定常量 `PROBE_CHECK_TICKS = 10`、`PROBE_SAFE_TICKS = 7`、`ProbeIsSafe(`、`SECTOR_SCAN_TICKS = 21`、`LEGIT_ARBITRATION_TICKS = 26`、`AUTO_DRAG_MAX_DIST = 380.0f` / `AUTO_DRAG_MIN_DIST = 16.0f`、`IsBlacklistedGametype(`；`WEIGHT_SCALE = 0.01f`、`std::abs(DirDiff - 2.0f)`、`std::abs(HookDiff - 1.0f)`、`s_aDirs[3] = {-1, 0, 1}`、`s_aHooks[2] = {0, 1}`、`Exploitation + Heuristic`、`if(Child.m_Visits == 0)`；引擎里必须调用 `SelectLegitRootChild(`，且 `MostVisits` / `m_Visits > MostVisits` **不得**再出现；探针必须把 ≥7 帧折算成安全哨兵（`ProbeIsSafe(Survival) ? SIMULATION_SAFE_CONSTANT : Survival`），引擎同时导出 `RunLightweightProbe` / `RunSectorScan`，组件里必须按 `probe → sector scan → agent` 的顺序调用（脚本用 `index()` 比较三处的先后），五道门控的枚举与 `IsGamemodeBlacklisted()` / `IsPlayerInactive()` / `IsCharacterFrozen()` / `IsAfk()` / `UpdateAfkTimer(` 必须存在、且 `if(IsGamemodeBlacklisted()) < if(IsPlayerInactive()) < if(IsCharacterFrozen()) < if(IsAfk())`；门控 2 要含 `GAMESTATEFLAG_PAUSED` 与 `TEAM_SPECTATORS`，门控 3 要含 `m_FreezeTime > 0 || pChar->m_FrozenLastTick`，组件里**不得**再出现 `SetEnabled(false)`（AFK 不再关总开关）。26-Tick 仲裁必须仍然调用 `ArbitrationGain(CandidateSurvival, HumanSurvival, LEGIT_ARBITRATION_TICKS)` 与 `ArbitrationAllowsOverride(...)`，且 `post hoc gain below 1 tick` 存在、`PlayerSurv` / `BestSurvHook0` **不得**复活。(c) 五个代理：Basic 的 `BASIC_CHECK_TICKS = 6` 与 `s_aCandidateDirs[3] = {0, -1, 1}`；Legit 的 `3.402823466e+38`；Blatant 的六级级联顺序（脚本比较 `KickScore` → `// --- 2. Auto drag` → `// --- 3. Unfreeze escape` → `// --- 4. Greedy search` → `// --- 5. NSIF` 五处的先后）、`Set.m_KickInTicks`、`m_SavedSafeSequence`、`Set.m_AutoDrag` + `auto drag a teammate`、`FindNearestUnfreezeTile` + `escape to an unfreeze tile`、`Set.m_Aimbot` + `BestSurvivalAim` + `BestNearAim`、`BuildBlatantCandidates(Ctx.m_Input`、并发推演 `SimulateBranchesParallel(` + `std::async(std::launch::async`、NSIF 的保留式条件 `(Set.m_Nsif || Set.m_TrackPoint) && !m_SavedSafeSequence.empty()`；Fentbot 的 `FENT_FLOW_WEIGHT = 1750.0f` 与档位值 88/160/1000/300；Pilot 的三个参数名；每个代理都必须有 `AvoidInput <类名>::GetAction(` 且在组件里 `new Avoid::<类名>(`。(d) 瓦片编辑器：`class CTileEditor`、`CNavigator::Rebuild(..., const CTileEditor *pEditor)` 的完整签名、`m_pEditor->IsTunnel(X, Y)` 与 `IsFinish(X, Y)`、`EditorRevision()` 与 `m_Nav.EditorRevision() != EditorRevision`（编辑必须让流场失效）、组件里有 `Avoid::CTileEditor m_TileEditor` 与 `Ctx.m_pTileEditor = &m_TileEditor;`、`AutoFinish(` / `AutoTunnels(` / `Interact(` / `ClearAll` 被实现且被组件调用、三个自复位参数在组件里确实被消费。(e) 输入钩子：`avoid.h` 里有 `EInputResult ApplyInput(`，组件里有 `*pInput = m_LastOverride;` 与 `FinishInput(`，组件里**不出现** `m_Controls.m_aInputData`，`WantsEveryTickInput` 在组件与 `controls.cpp` 里都不存在，`gameclient.cpp` 里有 `m_Avoid.ApplyInput(&Input) != CAvoid::INPUT_IDLE` 与 TAS 录制那行 |
+| 6 | `[6/7] engine contract` | 对源码做字符串断言，分五组：(a) 模拟器：`SimulateCandidate` + `CopyWorldClean` + `SIMULATION_SAFE_CONSTANT = 9999`；**危险判定**：存在 `== TILE_DEATH` 且**不存在** `& TILE_DEATH`（位与会把 finish / unfreeze 当死亡格），冻结条件必须是 `pChar->m_FreezeTime > 0 \|\| pChar->m_FrozenLastTick \|\| pCore->m_DeepFrozen` 且**不得**出现 `m_Core.m_IsInFreeze \|\| pCore->m_DeepFrozen`。(b) 决策规则（现在全部在 `avoid_decision.h`）：流水线与仲裁的固定常量 `PROBE_CHECK_TICKS = 10`、`PROBE_SAFE_TICKS = 7`、`ProbeIsSafe(`、`SECTOR_SCAN_TICKS = 21`、`LEGIT_ARBITRATION_TICKS = 26`、`AUTO_DRAG_MAX_DIST = 380.0f` / `AUTO_DRAG_MIN_DIST = 16.0f`、`IsBlacklistedGametype(`；`WEIGHT_SCALE = 0.01f`、`std::abs(DirDiff - 2.0f)`、`std::abs(HookDiff - 1.0f)`、`s_aDirs[3] = {-1, 0, 1}`、`s_aHooks[2] = {0, 1}`、`Exploitation + Heuristic`、`if(Child.m_Visits == 0)`；引擎里必须调用 `SelectLegitRootChild(`，且 `MostVisits` / `m_Visits > MostVisits` **不得**再出现；探针必须把 ≥7 帧折算成安全哨兵（`ProbeIsSafe(Survival) ? SIMULATION_SAFE_CONSTANT : Survival`），引擎同时导出 `RunLightweightProbe` / `RunSectorScan`，组件里必须按 `probe → sector scan → agent` 的顺序调用（脚本用 `index()` 比较三处的先后），五道门控的枚举与 `IsGamemodeBlacklisted()` / `IsPlayerInactive()` / `IsCharacterFrozen()` / `IsAfk()` / `UpdateAfkTimer(` 必须存在、且 `if(IsGamemodeBlacklisted()) < if(IsPlayerInactive()) < if(IsCharacterFrozen()) < if(IsAfk())`；门控 2 要含 `GAMESTATEFLAG_PAUSED` 与 `TEAM_SPECTATORS`，门控 3 要含 `m_FreezeTime > 0 || pChar->m_FrozenLastTick`，组件里**不得**再出现 `SetEnabled(false)`（AFK 不再关总开关）。26-Tick 仲裁必须仍然调用 `ArbitrationGain(CandidateSurvival, HumanSurvival, LEGIT_ARBITRATION_TICKS)` 与 `ArbitrationAllowsOverride(...)`，且 `post hoc gain below 1 tick` 存在、`PlayerSurv` / `BestSurvHook0` **不得**复活。(c) 五个代理：Basic 的 `BASIC_CHECK_TICKS = 6` 与 `s_aCandidateDirs[3] = {0, -1, 1}`；Legit 的 `3.402823466e+38`；Blatant 的八级级联顺序（脚本比较 `KickScore` → `// --- 2. Preemptive hook release` → `// --- 3. Auto drag` → `// --- 4. Emergency air jump` → `// --- 5. Emergency upper hemisphere radar` → `// --- 6. Unfreeze escape` → `// --- 7. Greedy search` → `// --- 8. NSIF` 八处的先后）、`Set.m_KickInTicks`、`m_SavedSafeSequence`、`Set.m_AutoDrag` + `auto drag a teammate`、`FindNearestUnfreezeTile` + `escape to an unfreeze tile`、`Set.m_Aimbot` + `BestSurvivalAim` + `BestNearAim`、`BuildBlatantCandidates(Ctx.m_Input, Set.m_BlatantDirection, Set.m_BlatantHook, CanAirJump, &vActions)`、`const int JumpCount = CanAirJump ? 2 : 1;`、`s_aJumps[2] = {0, 1}`、并发推演 `SimulateBranchesParallel(` + `std::async(std::launch::async`、NSIF 的保留式条件 `(Set.m_Nsif || Set.m_TrackPoint) && !m_SavedSafeSequence.empty()`；v5.1 的三个救援机制（`bool CanUseAirJump(` / `bool CheckPreemptiveHookRelease(` / `bool CheckHeadroomClearance(` / `bool TryEmergencyAirJump(` / `bool TryEmergencyWallCeilingHook(` 必须同时出现在引擎头与引擎实现里，`PreemptiveHookReleaseWins(` / `HeadroomAllowsAirJump(` + `SHeadroomProbe` / `RadarTargetIsHookable(` + `EmergencyRadarDirs()` + `EMERGENCY_RADAR_RAYS = 5` / `HOOK_MAX_DISTANCE = 380.0f` / `AIR_JUMP_HEADROOM = 48.0f` / `AIR_JUMP_MIN_CLEARANCE = 32.0f` / `AIR_JUMP_MIN_GAIN_TICKS = 8` / `RADAR_MIN_SURVIVAL_TICKS = 10` 必须在决策头里，`Tile == TILE_DEATH || IsFreezingTile(Tile)` 必须存在而按位与的写法不得出现，Legit 的 `BuildLegitCandidates(pCurr->m_Action, ..., CanAirJump, &vCandidates)` 与“抢断在仲裁之前”的先后也必须成立；Fentbot 的 `FENT_FLOW_WEIGHT = 1750.0f` 与档位值 88/160/1000/300；Pilot 的三个参数名；每个代理都必须有 `AvoidInput <类名>::GetAction(` 且在组件里 `new Avoid::<类名>(`。(d) 瓦片编辑器：`class CTileEditor`、`CNavigator::Rebuild(..., const CTileEditor *pEditor)` 的完整签名、`m_pEditor->IsTunnel(X, Y)` 与 `IsFinish(X, Y)`、`EditorRevision()` 与 `m_Nav.EditorRevision() != EditorRevision`（编辑必须让流场失效）、组件里有 `Avoid::CTileEditor m_TileEditor` 与 `Ctx.m_pTileEditor = &m_TileEditor;`、`AutoFinish(` / `AutoTunnels(` / `Interact(` / `ClearAll` 被实现且被组件调用、三个自复位参数在组件里确实被消费。(e) 输入钩子：`avoid.h` 里有 `EInputResult ApplyInput(`，组件里有 `*pInput = m_LastOverride;` 与 `FinishInput(`，组件里**不出现** `m_Controls.m_aInputData`，`WantsEveryTickInput` 在组件与 `controls.cpp` 里都不存在，`gameclient.cpp` 里有 `m_Avoid.ApplyInput(&Input) != CAvoid::INPUT_IDLE` 与 TAS 录制那行 |
 | 6b | `[6b/7] HUD module wiring and render order` | `hud_layout.h` 有 `MODULE_AVOID,`；`hud_layout.cpp` 有 `"avoid",`、`"Avoid",`、`case MODULE_AVOID:`；`hud_editor.cpp` 有 `MODULE_AVOID` 与 `m_Avoid.RenderPreview()`；渲染组件顺序必须是 `m_MapLayersForeground < m_Hud < m_Tas < m_Avoid`（打印 `ok: foreground < Hud < Tas < Avoid`） |
-| 7 | `[7/7] testrunner test suite` | `ninja -C build testrunner` 后运行 `./build/testrunner`，即整个引擎/游戏 gtest 套件；其中 `src/test/avoid_decision_test.cpp` 贡献 17 条 Avoid 决策用例（见下） |
+| 7 | `[7/7] testrunner test suite` | `ninja -C build testrunner` 后运行 `./build/testrunner`，即整个引擎/游戏 gtest 套件；其中 `src/test/avoid_decision_test.cpp` 贡献 23 条 Avoid 决策用例（见下） |
 
-第 7 步现在**有** Avoid 专属用例：`src/test/avoid_decision_test.cpp` 的 17 条 `TEST(AvoidDecision, …)`，覆盖 Legit 启发式的三个权重项与“玩家自己的输入永远排最高”、`SelectLegitRootChild` 的五种情形（安全时保留玩家输入、玩家在移动时保留、玩家输入会死时接管、跳过未访问子节点、整环未访问时返回 −1）、`BuildLegitCandidates` 的顺序与两个开关、`BuildBlatantCandidates` 的六个动态分支与两个开关、两个候选集的瞄准归一化、`BuildApproachInput` 的走向与瞄准，以及 v5.0 新增的四条：玩法黑名单的整串匹配、探针阈值（`ProbeIsSafe(6)` 为假 / `ProbeIsSafe(7)` 为真）、扇区扫描角（`Segments = 5` 时 6 条射线从 −45° 到 +45°、中心射线保持玩家角度）与 26-Tick 增益仲裁（9999 折算成窗口、`Gain >= 1` 才放行）。仓库根目录残留的一批 `CAvoidSimulatorTest.*.tmp` 空目录是 v2.x 时期 gtest 留下的临时目录，**不是**回归的一部分。整机行为回归仍然靠第 2–6b 步的契约断言 + §10 的实机验收。
+第 7 步现在**有** Avoid 专属用例：`src/test/avoid_decision_test.cpp` 的 23 条 `TEST(AvoidDecision, …)`，覆盖 Legit 启发式的三个权重项与“玩家自己的输入永远排最高”、`SelectLegitRootChild` 的五种情形（安全时保留玩家输入、玩家在移动时保留、玩家输入会死时接管、跳过未访问子节点、整环未访问时返回 −1）、`BuildLegitCandidates` 的顺序与两个开关、`BuildBlatantCandidates` 的 12 分支笛卡尔积与三个开关、两个候选集的瞄准归一化、`BuildApproachInput` 的走向与瞄准，v5.0 的四条（玩法黑名单的整串匹配、探针阈值 `ProbeIsSafe(6)` 为假 / `ProbeIsSafe(7)` 为真、扇区扫描角、26-Tick 增益仲裁），以及 v5.1 新增的六条：`BuildBlatantCandidates` 的 12 分支顺序、跳跃维只在有二段跳时打开且关闭时保留玩家的跳跃键、`BuildLegitCandidates` 的空中二段跳维与“没有二段跳时继承而不是清零”、提前松勾判定（含 9999 折算与 `Keep < CheckTicks` 边界）、雷达五条射线的方向/朝上性与锚点过滤（含解冻块与实心块必须被接受这条反位掩码回归）、净空规则（32 px 边界、冻结/致死顶棚与正上方瓦片）与两个阈值常量。仓库根目录残留的一批 `CAvoidSimulatorTest.*.tmp` 空目录是 v2.x 时期 gtest 留下的临时目录，**不是**回归的一部分。整机行为回归仍然靠第 2–6b 步的契约断言 + §10 的实机验收。
 
 改动前的自查顺序建议：`avoid_selfcheck.sh` → 按 §10 手动过一遍受影响的代理 → 若改了参数集，确认第 2 步的契约表也同步更新（它和头文件必须同时改，否则脚本会报 `parameter set drift`）→ 若改了决策规则，把公式改动落到 `avoid_decision.h` 的纯函数里并在 `avoid_decision_test.cpp` 补一条用例（自检第 6 步只能拦“整块逻辑被换掉”，拦不住公式写错）。
 
@@ -1247,11 +1265,13 @@ bind X toggle bc_avoid_enabled 1 0
 11. **Legit 与 Fentbot 使用全局 `rand()`，不具备逐位可复现性。** Legit 用 `rand()` 选展开的子节点，Fentbot 用 `rand()` 做播种与变异：同一场景两次运行会得到不同（但同类）的搜索过程。Basic / Blatant 不用随机数；Pilot 用自带 LCG（`m_Rng` 固定种子 `0x1f123bb5`），是唯一在相同输入下逐位可复现的搜索代理。
 12. **Legit 的 8 ms 护栏是墙钟检查点，不是硬实时保证。** 它每 8 次迭代才看一次表（§9.4），因此单次决策仍可能略微超过 8 ms（最坏多跑 7 次迭代）；它保证的是“不会因为迭代数拉到 1000 就整帧卡住”，不是“一定在 8 ms 内结束”。
 13. **Blatant 的 `m_AimTarget` 只在接管时发布，因此覆盖层可能“什么都不显示”。** 这是有意的（只显示真正被采用的瞄准，§5.2/§7.7）：当 kick-in（或刹车余量）让路、或没有任何候选比玩家原输入活得久时，即使瞄准层内部算出过候选，橙色标记也不会亮。排查“瞄准层是否在工作”要看 `bc_avoid_aimbot_segments` 对 `Cost` 的影响，而不是看标记。
-14. **解冻块开关的双重语义。** 英文 KRX 文档写“避免解冻块”，spec §7.4/§7.6 写“冻结前主动逃向解冻块”。本实现在 Blatant 上两者都做：搜索期间前 `bc_avoid_blatant_unfreeze_ticks` 个 tick 内踩到解冻块算危险（文档语义），但第 3 步的逃生候选用一份 `m_AvoidUnfreeze = false` / `m_UnfreezeTicks = 0` 的临时标志推演，**豁免**这条规则（规格语义）。Legit 只保留文档语义（spec §8 没有逃生步骤）。
+14. **解冻块开关的双重语义。** 英文 KRX 文档写“避免解冻块”，spec §7.4/§7.6 写“冻结前主动逃向解冻块”。本实现在 Blatant 上两者都做：搜索期间前 `bc_avoid_blatant_unfreeze_ticks` 个 tick 内踩到解冻块算危险（文档语义），但第 6 步的逃生候选用一份 `m_AvoidUnfreeze = false` / `m_UnfreezeTicks = 0` 的临时标志推演，**豁免**这条规则（规格语义）。Legit 只保留文档语义（spec §8 没有逃生步骤）。
 15. **瞄准层的门控与语义。** spec §7.6 的 Auto Drag **不受** `bc_avoid_aimbot` 控制（本实现照做：它只需要 `bc_avoid_auto_drag`；推演里队友是否实体仍由 `bc_avoid_player_prediction` 决定，不再额外加一道闸）；Track Point / Auto Aim / Aim Assist 属于“需要瞄准辅助的功能”，统一由 `bc_avoid_aimbot` 打开（对应参考的 `krx_avoid_tile_blatant_aimbot`，默认 0）。整层只**产生候选**：所有瞄准候选都走与普通候选相同的 `Consider()`，由生存搜索裁决，因此瞄准永远不会让机器人更不安全，`m_AimTarget` 也只在采纳时点亮（§5.2、§12.13）。
 16. **瓦片编辑器在世界中用准星落点绘制。** `CTileEditor::Interact()` 收到的是 `m_Controls.m_aTargetPos`（世界坐标），不是屏幕像素反投影；半径内可达的图块都能画，与鼠标指针在屏幕上的像素位置无关。菜单或控制台打开时不接受点击（光标属于它们）。
 17. **Fentbot 适应度里的流场项被同比缩放，并且混入了存活与距离。** spec §9.2 写的是 `Fitness = Σ(v·D) × 1750.0 − Penalty_dist`；本实现的权重常量仍然是 `FENT_FLOW_WEIGHT = 1750.0f`（自检第 6 步会校验它存在），但乘进适应度之前先除以 50（`m_SessionFlow.m_Scale = FENT_FLOW_WEIGHT / 50.0f = 35`，因为速度单位是 px/tick），结算式是 `Fitness = Survival + FlowScore − 2 × DistanceAt(m_EndPos)`：存活 tick 数以 1/tick、终点距离以 2/tick 计入。这样做的原因是避免浮点量级失衡，同时让“活得久”和“离终点近”仍能影响排序；行为上流场项依旧主导（每 tick 最高约 ±350），所以**不要**把它当成与参考逐位一致。
 18. **门控 5（探针）只拦 Basic / Legit / Blatant，不拦 Fentbot / Pilot。** spec §5.5 的探针在调度器里位于“代理分派”之前，字面上对所有模式生效；但 Fentbot / Pilot 是**分片规划器**——搜索状态只在被调用的 tick 里推进（`PLANNER_STEPS_PER_TICK`），被探针拦住就永远攒不出计划，而“玩家安全”恰恰是 Pilot 自主巡航 / Fentbot 沿流场寻路的正常工作状态。代码里 `ProbeGated = AgentId != AGENT_FENTBOT && AgentId != AGENT_PILOT`；这两个模式保留自己的每帧预算与 `PLAN_GUARD_TICKS` 闭环护栏（计划不比玩家输入好就丢弃重规划）。Basic / Legit / Blatant 严格按规格被探针拦截（§3.5）。
 19. **AFK 门控是每 tick 阻断，不写 `bc_avoid_enabled`。** spec §5.4 的措辞是“避障自动进入睡眠”，门控表把它列为“阻断”；本实现据此实现：`IsAfk()` 命中只让这一 tick 不接管、状态变 `STATE_AFK`，并在进入 AFK 的那一 tick 打印一次 `Avoid: AFK protection paused the bot`。旧实现直接写 `bc_avoid_enabled = 0`——而它是 `CFGFLAG_SAVE`，会落盘，用户离开键盘一次就**永久**失去机器人，必须回菜单手动打开。现在玩家一碰按键立刻恢复（`UpdateAfkTimer()` 刷新 `m_LastActiveTime`），总开关始终由玩家掌握。
-20. **NSIF 是“保留式回放”，并且带一道“不许更差”的闸。** 缓存里长度大于 1 时逐步弹出（与规格一致），但长度为 1 时**保留**这一步而不是消费掉：规格的贪心搜索只压入一个动作，缓存里通常只有一步，若按“取出即 `erase`”处理，“必死局”的第二个 tick 就会没有输入可发、把手交还给玩家。另外第 7 步的接管条件对所有候选（含回放下来的旧动作）都是 `BestSurvival > KickSafety`：规格的 NSIF 分支是无条件返回，这里要求重放的动作至少比玩家当前输入多活一帧，否则不接管。回放路径由 `bc_avoid_nsif` **或** `bc_avoid_track_point` 打开（`Set.m_Nsif || Set.m_TrackPoint`）。缓存只在这三种情况下被清空：`FoundSafe`（随即写入新的那一步）、kick-in / 刹车余量的让路分支、`OnReset()` / 地图加载。
+20. **NSIF 是“保留式回放”，并且带一道“不许更差”的闸。** 缓存里长度大于 1 时逐步弹出（与规格一致），但长度为 1 时**保留**这一步而不是消费掉：规格的贪心搜索只压入一个动作，缓存里通常只有一步，若按“取出即 `erase`”处理，“必死局”的第二个 tick 就会没有输入可发、把手交还给玩家。另外第 9 步的接管条件对所有候选（含回放下来的旧动作）都是 `BestSurvival > KickSafety`：规格的 NSIF 分支是无条件返回，这里要求重放的动作至少比玩家当前输入多活一帧，否则不接管。回放路径由 `bc_avoid_nsif` **或** `bc_avoid_track_point` 打开（`Set.m_Nsif || Set.m_TrackPoint`）。缓存只在这三种情况下被清空：`FoundSafe`（随即写入新的那一步）、kick-in / 刹车余量的让路分支、`OnReset()` / 地图加载。
 21. **删掉了两段规格里没有、而且会挡住自救的“保护性否决”。** 一段在 Legit：MCTS 之后原有的“钩索二次校验（玩家没按钩索时 `PlayerSurv > 3` 就不许自动钩）”与“方向保护（6 帧内安全就退回玩家方向）”；另一段在 Blatant：`BestSurvHook0 > 3` 的钩索否决与方向二次校验。它们都在“玩家输入在 check 窗口内必冻”这个**唯一还会调用代理的窗口**里把已经推演出来的活路否掉（`BestSurvHook0 > 3` 在这种窗口里几乎是常态，等于主动取消勾墙 / 勾队友的救援）。现在整段被规格里的机制取代：Legit 用 26-Tick 双路仲裁（同一把尺子量两边），Blatant 用“严格活得更久”的接管条件与 `Consider()` 的平局规则。自检第 6 步断言 `PlayerSurv` / `BestSurvHook0` 不得复活。
+22. **Legit 展开时“没有二段跳”这一支继承父节点的跳跃键，不清零。** 规格 §8.3 的字面写法是 `Act.m_Jump = j`，而 `JumpOptions` 在没有二段跳时只有 `{0}`——照字面实现，跑动中按住空格的玩家在搜索里会**丢掉地面跳**（每个子节点的 `m_Jump` 都被清零，只有玩家自己那一次按键能起跳）。本实现改成 `CanAirJump ? Jump : Parent.m_Jump`：有二段跳时按规格给出 `{0, 1}` 两条分支，没有时保持父节点的值。注意规格 §7.2 的 Blatant 版本本来就是“`if(CanJump)` 才写 `m_Jump`”，两处写法不一致，这里按 Blatant 的语义统一（`avoid_decision.h` 的 `BuildLegitCandidates()` 里有注释说明）。
+23. **Legit 的提前松勾窗口是自己的 `bc_avoid_legit_check_ticks`（默认 6），比 Blatant 的 26 帧短。** 规格 §8.3 第 4.5 步传的就是 `CheckTicks`，本实现照做。后果是“荡进黑水”这种要十几帧才发生的危险，Legit 上要等角色离水面只剩 6 帧才抢断（Blatant 默认 26 帧就会提前动手）。想让它更早触发就调大 `bc_avoid_legit_check_ticks`（同时会变慢：它也是 MCTS 每次 rollout 的长度）；这类救援的主力是 Blatant。

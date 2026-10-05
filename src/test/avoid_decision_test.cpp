@@ -174,7 +174,7 @@ TEST(AvoidDecision, LegitRootSelectionReportsAnEmptyRing)
 TEST(AvoidDecision, LegitCandidatesFollowTheReferenceOrder)
 {
 	std::vector<CNetObj_PlayerInput> vCandidates;
-	Avoid::BuildLegitCandidates(MakeInput(0, 0), true, true, &vCandidates);
+	Avoid::BuildLegitCandidates(MakeInput(0, 0), true, true, false, &vCandidates);
 
 	const int aExpected[6][2] = {{-1, 0}, {0, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1}};
 	ASSERT_EQ(vCandidates.size(), 6u);
@@ -185,12 +185,41 @@ TEST(AvoidDecision, LegitCandidatesFollowTheReferenceOrder)
 	}
 }
 
+TEST(AvoidDecision, LegitCandidatesAddTheAirJumpAxisToTheDirectionRing)
+{
+	// Reference spec 8.3: while the tee owns its air jump and has headroom, every direction of the
+	// hook = 0 ring is offered twice - once without and once with the jump injected. The hook = 1
+	// ring below inherits the parent's jump state, exactly like the reference.
+	std::vector<CNetObj_PlayerInput> vCandidates;
+	Avoid::BuildLegitCandidates(MakeInput(0, 0, 1), true, true, true, &vCandidates);
+
+	const int aExpected[9][3] = {
+		{-1, 0, 0}, {-1, 0, 1},
+		{0, 0, 0}, {0, 0, 1},
+		{1, 0, 0}, {1, 0, 1},
+		{-1, 1, 1}, {0, 1, 1}, {1, 1, 1}};
+	ASSERT_EQ(vCandidates.size(), 9u);
+	for(size_t i = 0; i < vCandidates.size(); ++i)
+	{
+		EXPECT_EQ(vCandidates[i].m_Direction, aExpected[i][0]) << "candidate " << i;
+		EXPECT_EQ(vCandidates[i].m_Hook, aExpected[i][1]) << "candidate " << i;
+		EXPECT_EQ(vCandidates[i].m_Jump, aExpected[i][2]) << "candidate " << i;
+	}
+
+	// Without an air jump to spend the jump key of the parent is inherited, not cleared: clearing it
+	// would take the ground jump away from every child and the agent could never jump while running.
+	Avoid::BuildLegitCandidates(MakeInput(1, 1, 1), true, false, false, &vCandidates);
+	ASSERT_EQ(vCandidates.size(), 3u);
+	for(const CNetObj_PlayerInput &Candidate : vCandidates)
+		EXPECT_EQ(Candidate.m_Jump, 1);
+}
+
 TEST(AvoidDecision, LegitCandidatesRespectTheAssistSwitches)
 {
 	std::vector<CNetObj_PlayerInput> vCandidates;
 
 	// Direction only: the three directions, the hook state of the parent is kept.
-	Avoid::BuildLegitCandidates(MakeInput(0, 1), true, false, &vCandidates);
+	Avoid::BuildLegitCandidates(MakeInput(0, 1), true, false, false, &vCandidates);
 	ASSERT_EQ(vCandidates.size(), 3u);
 	for(size_t i = 0; i < vCandidates.size(); ++i)
 	{
@@ -199,7 +228,7 @@ TEST(AvoidDecision, LegitCandidatesRespectTheAssistSwitches)
 	}
 
 	// Hook only: both hook states, the direction of the parent is kept.
-	Avoid::BuildLegitCandidates(MakeInput(1, 0), false, true, &vCandidates);
+	Avoid::BuildLegitCandidates(MakeInput(1, 0), false, true, false, &vCandidates);
 	ASSERT_EQ(vCandidates.size(), 2u);
 	for(size_t i = 0; i < vCandidates.size(); ++i)
 	{
@@ -208,21 +237,21 @@ TEST(AvoidDecision, LegitCandidatesRespectTheAssistSwitches)
 	}
 
 	// Nothing enabled: no children at all, the agent then keeps the player's input.
-	Avoid::BuildLegitCandidates(MakeInput(1, 1), false, false, &vCandidates);
+	Avoid::BuildLegitCandidates(MakeInput(1, 1), false, false, false, &vCandidates);
 	EXPECT_TRUE(vCandidates.empty());
 }
 
 TEST(AvoidDecision, CandidateEnumerationsNormalizeTheCentreAim)
 {
 	std::vector<CNetObj_PlayerInput> vCandidates;
-	Avoid::BuildLegitCandidates(MakeInput(0, 0, 0, 0, 0), true, true, &vCandidates);
+	Avoid::BuildLegitCandidates(MakeInput(0, 0, 0, 0, 0), true, true, true, &vCandidates);
 	for(const CNetObj_PlayerInput &Candidate : vCandidates)
 	{
 		EXPECT_FALSE(Candidate.m_TargetX == 0 && Candidate.m_TargetY == 0);
 		EXPECT_EQ(Candidate.m_TargetY, -1);
 	}
 
-	Avoid::BuildBlatantCandidates(MakeInput(0, 0, 0, 0, 0), true, true, &vCandidates);
+	Avoid::BuildBlatantCandidates(MakeInput(0, 0, 0, 0, 0), true, true, true, &vCandidates);
 	for(const CNetObj_PlayerInput &Candidate : vCandidates)
 	{
 		EXPECT_FALSE(Candidate.m_TargetX == 0 && Candidate.m_TargetY == 0);
@@ -230,97 +259,69 @@ TEST(AvoidDecision, CandidateEnumerationsNormalizeTheCentreAim)
 	}
 }
 
-TEST(AvoidDecision, BlatantCandidatesFollowTheReferenceOrder)
+TEST(AvoidDecision, BlatantCandidatesEnumerateTheFullCartesianSpace)
 {
+	// Reference spec 7.2: Blatant does not walk a preference list any more, it simulates the whole
+	// action space - Dirs[3] = {0, -1, 1} x Hooks[2] = {0, 1} x Jumps[2] = {0, 1}. The axis order is
+	// the reference order and it decides every survival tie, because the greedy search keeps the
+	// first branch that reaches the best survival count.
 	std::vector<CNetObj_PlayerInput> vCandidates;
+	Avoid::BuildBlatantCandidates(MakeInput(1, 1), true, true, true, &vCandidates);
 
-	// Branch A3: Moving right (1, 0) -> alternatives in order of preference:
-	// 0: brake (0, 0)
-	// 1: turn left (-1, 0)
-	// 2: hook right (1, 1)
-	// 3: hook neutral (0, 1)
-	// 4: hook left (-1, 1)
-	Avoid::BuildBlatantCandidates(MakeInput(1, 0), true, true, &vCandidates);
-	const int aExpectedRight[5][2] = {{0, 0}, {-1, 0}, {1, 1}, {0, 1}, {-1, 1}};
-	ASSERT_EQ(vCandidates.size(), 5u);
+	const int aExpected[12][3] = {
+		{0, 0, 0}, {0, 0, 1}, {0, 1, 0}, {0, 1, 1},
+		{-1, 0, 0}, {-1, 0, 1}, {-1, 1, 0}, {-1, 1, 1},
+		{1, 0, 0}, {1, 0, 1}, {1, 1, 0}, {1, 1, 1}};
+	ASSERT_EQ(vCandidates.size(), 12u);
 	for(size_t i = 0; i < vCandidates.size(); ++i)
 	{
-		EXPECT_EQ(vCandidates[i].m_Direction, aExpectedRight[i][0]) << "candidate " << i;
-		EXPECT_EQ(vCandidates[i].m_Hook, aExpectedRight[i][1]) << "candidate " << i;
-	}
-
-	// Branch A1: Moving left (-1, 0) -> alternatives:
-	Avoid::BuildBlatantCandidates(MakeInput(-1, 0), true, true, &vCandidates);
-	const int aExpectedLeft[5][2] = {{0, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1}};
-	ASSERT_EQ(vCandidates.size(), 5u);
-	for(size_t i = 0; i < vCandidates.size(); ++i)
-	{
-		EXPECT_EQ(vCandidates[i].m_Direction, aExpectedLeft[i][0]);
-		EXPECT_EQ(vCandidates[i].m_Hook, aExpectedLeft[i][1]);
-	}
-
-	// Branch A2: Neutral (0, 0) -> alternatives:
-	Avoid::BuildBlatantCandidates(MakeInput(0, 0), true, true, &vCandidates);
-	const int aExpectedNeutral[5][2] = {{-1, 0}, {1, 0}, {0, 1}, {-1, 1}, {1, 1}};
-	ASSERT_EQ(vCandidates.size(), 5u);
-	for(size_t i = 0; i < vCandidates.size(); ++i)
-	{
-		EXPECT_EQ(vCandidates[i].m_Direction, aExpectedNeutral[i][0]);
-		EXPECT_EQ(vCandidates[i].m_Hook, aExpectedNeutral[i][1]);
-	}
-
-	// Branch B3: Hook right (1, 1) -> alternatives:
-	Avoid::BuildBlatantCandidates(MakeInput(1, 1), true, true, &vCandidates);
-	const int aExpectedHookRight[5][2] = {{1, 0}, {0, 1}, {0, 0}, {-1, 1}, {-1, 0}};
-	ASSERT_EQ(vCandidates.size(), 5u);
-	for(size_t i = 0; i < vCandidates.size(); ++i)
-	{
-		EXPECT_EQ(vCandidates[i].m_Direction, aExpectedHookRight[i][0]);
-		EXPECT_EQ(vCandidates[i].m_Hook, aExpectedHookRight[i][1]);
-	}
-
-	// Branch B1: Hook left (-1, 1) -> alternatives:
-	Avoid::BuildBlatantCandidates(MakeInput(-1, 1), true, true, &vCandidates);
-	const int aExpectedHookLeft[5][2] = {{-1, 0}, {0, 1}, {0, 0}, {1, 1}, {1, 0}};
-	ASSERT_EQ(vCandidates.size(), 5u);
-	for(size_t i = 0; i < vCandidates.size(); ++i)
-	{
-		EXPECT_EQ(vCandidates[i].m_Direction, aExpectedHookLeft[i][0]);
-		EXPECT_EQ(vCandidates[i].m_Hook, aExpectedHookLeft[i][1]);
-	}
-
-	// Branch B2: Hook neutral (0, 1) -> alternatives:
-	Avoid::BuildBlatantCandidates(MakeInput(0, 1), true, true, &vCandidates);
-	const int aExpectedHookNeutral[5][2] = {{0, 0}, {-1, 1}, {1, 1}, {-1, 0}, {1, 0}};
-	ASSERT_EQ(vCandidates.size(), 5u);
-	for(size_t i = 0; i < vCandidates.size(); ++i)
-	{
-		EXPECT_EQ(vCandidates[i].m_Direction, aExpectedHookNeutral[i][0]);
-		EXPECT_EQ(vCandidates[i].m_Hook, aExpectedHookNeutral[i][1]);
+		EXPECT_EQ(vCandidates[i].m_Direction, aExpected[i][0]) << "candidate " << i;
+		EXPECT_EQ(vCandidates[i].m_Hook, aExpected[i][1]) << "candidate " << i;
+		EXPECT_EQ(vCandidates[i].m_Jump, aExpected[i][2]) << "candidate " << i;
 	}
 }
 
-TEST(AvoidDecision, BlatantCandidatesRespectTheAssistSwitches)
+TEST(AvoidDecision, BlatantCandidatesOnlyOpenTheJumpAxisWhenTheAirJumpIsThere)
 {
 	std::vector<CNetObj_PlayerInput> vCandidates;
 
-	// Direction only: hook state of the player kept (1). For input (1, 1), direction alternatives are 0, -1.
-	Avoid::BuildBlatantCandidates(MakeInput(1, 1), true, false, &vCandidates);
+	// No air jump to spend: six branches, and the jump key the player is holding survives in all
+	// of them - a grounded tee keeps its ground jump that way.
+	Avoid::BuildBlatantCandidates(MakeInput(0, 0, 1), true, true, false, &vCandidates);
+	ASSERT_EQ(vCandidates.size(), 6u);
+	for(const CNetObj_PlayerInput &Candidate : vCandidates)
+		EXPECT_EQ(Candidate.m_Jump, 1);
+
+	// Both assist switches off: the player's own direction and hook survive, only the jump axis
+	// remains. This is the state the agent has to be able to act in as well.
+	Avoid::BuildBlatantCandidates(MakeInput(-1, 1, 0), false, false, true, &vCandidates);
 	ASSERT_EQ(vCandidates.size(), 2u);
-	EXPECT_EQ(vCandidates[0].m_Direction, 0);
-	EXPECT_EQ(vCandidates[0].m_Hook, 1);
-	EXPECT_EQ(vCandidates[1].m_Direction, -1);
-	EXPECT_EQ(vCandidates[1].m_Hook, 1);
+	for(const CNetObj_PlayerInput &Candidate : vCandidates)
+	{
+		EXPECT_EQ(Candidate.m_Direction, -1);
+		EXPECT_EQ(Candidate.m_Hook, 1);
+	}
+	EXPECT_EQ(vCandidates[0].m_Jump, 0);
+	EXPECT_EQ(vCandidates[1].m_Jump, 1);
 
-	// Hook only: direction of the player kept (-1). For input (-1, 1), hook alternative is 0.
-	Avoid::BuildBlatantCandidates(MakeInput(-1, 1), false, true, &vCandidates);
-	ASSERT_EQ(vCandidates.size(), 1u);
-	EXPECT_EQ(vCandidates[0].m_Direction, -1);
-	EXPECT_EQ(vCandidates[0].m_Hook, 0);
+	// Direction only: three directions times the two jump options, the hook state is kept.
+	Avoid::BuildBlatantCandidates(MakeInput(1, 1), true, false, true, &vCandidates);
+	ASSERT_EQ(vCandidates.size(), 6u);
+	const int aExpectedDirs[6] = {0, 0, -1, -1, 1, 1};
+	for(size_t i = 0; i < vCandidates.size(); ++i)
+	{
+		EXPECT_EQ(vCandidates[i].m_Direction, aExpectedDirs[i]);
+		EXPECT_EQ(vCandidates[i].m_Hook, 1);
+	}
 
-	// Neither: no alternatives.
-	Avoid::BuildBlatantCandidates(MakeInput(1, 0), false, false, &vCandidates);
-	EXPECT_TRUE(vCandidates.empty());
+	// Hook only: two hook states, no jump axis to open.
+	Avoid::BuildBlatantCandidates(MakeInput(1, 0), false, true, false, &vCandidates);
+	ASSERT_EQ(vCandidates.size(), 2u);
+	for(size_t i = 0; i < vCandidates.size(); ++i)
+	{
+		EXPECT_EQ(vCandidates[i].m_Direction, 1);
+		EXPECT_EQ(vCandidates[i].m_Hook, (int)i);
+	}
 }
 
 TEST(AvoidDecision, ApproachInputWalksAndAimsAtTheTarget)
@@ -425,4 +426,136 @@ TEST(AvoidDecision, GainArbitrationNeedsAWholeExtraTick)
 
 	EXPECT_EQ(Avoid::ArbitrationGain(9999, 20, Horizon), Horizon - 20);
 	EXPECT_EQ(Avoid::ArbitrationGain(5, 9999, Horizon), 5 - Horizon);
+}
+
+// -------------------------------------------------------------------------------------------
+// Airborne rescue mechanisms (reference spec 5.7 - 5.9, the v5.1 additions)
+//
+// These are the three rules that were missing from the module: the agent used to watch a player
+// who never lets go of the hook swing into the freeze, could not spend an air jump on its own, and
+// could not grab a ceiling the crosshair was not pointing at.
+// -------------------------------------------------------------------------------------------
+
+TEST(AvoidDecision, PreemptiveHookReleaseOnlyStealsTheKeyWhenLettingGoIsBetter)
+{
+	constexpr int CheckTicks = 26;
+
+	// Holding the hook freezes the tee inside the window, letting go carries it across: steal.
+	EXPECT_TRUE(Avoid::PreemptiveHookReleaseWins(12, 20, CheckTicks));
+	// Releasing perfectly while holding on dies: the strongest case of the rule.
+	EXPECT_TRUE(Avoid::PreemptiveHookReleaseWins(20, 9999, CheckTicks));
+	// The two branches are tied or the release is worse: the player keeps the hook key.
+	EXPECT_FALSE(Avoid::PreemptiveHookReleaseWins(12, 12, CheckTicks));
+	EXPECT_FALSE(Avoid::PreemptiveHookReleaseWins(12, 11, CheckTicks));
+	// Holding the hook already survives the whole window: there is nothing to rescue.
+	EXPECT_FALSE(Avoid::PreemptiveHookReleaseWins(9999, 9999, CheckTicks));
+	EXPECT_FALSE(Avoid::PreemptiveHookReleaseWins(CheckTicks, 9999, CheckTicks));
+	// One tick short of a safe hold is already enough for the rescue to fire.
+	EXPECT_TRUE(Avoid::PreemptiveHookReleaseWins(CheckTicks - 1, CheckTicks, CheckTicks));
+}
+
+TEST(AvoidDecision, RadarCastsTheFiveUpperHemisphereRays)
+{
+	// Reference spec 5.9: straight up, the two upper diagonals and both side walls. They are what
+	// makes the rescue work while the player is staring at the floor.
+	const vec2 *pDirs = Avoid::EmergencyRadarDirs();
+	ASSERT_EQ(Avoid::EMERGENCY_RADAR_RAYS, 5);
+
+	EXPECT_FLOAT_EQ(pDirs[0].x, 0.0f);
+	EXPECT_FLOAT_EQ(pDirs[0].y, -1.0f);
+	EXPECT_NEAR(pDirs[1].x, -0.7071f, 1e-4f);
+	EXPECT_NEAR(pDirs[1].y, -0.7071f, 1e-4f);
+	EXPECT_NEAR(pDirs[2].x, 0.7071f, 1e-4f);
+	EXPECT_NEAR(pDirs[2].y, -0.7071f, 1e-4f);
+	EXPECT_FLOAT_EQ(pDirs[3].x, -1.0f);
+	EXPECT_FLOAT_EQ(pDirs[3].y, -0.2f);
+	EXPECT_FLOAT_EQ(pDirs[4].x, 1.0f);
+	EXPECT_FLOAT_EQ(pDirs[4].y, -0.2f);
+
+	// Every ray of the fan points upwards: the radar never hooks deeper into the hazard.
+	for(int i = 0; i < Avoid::EMERGENCY_RADAR_RAYS; ++i)
+		EXPECT_LT(pDirs[i].y, 0.0f) << "ray " << i;
+
+	// The reach is the maximum hook extension of the engine.
+	EXPECT_FLOAT_EQ(Avoid::HOOK_MAX_DISTANCE, 380.0f);
+}
+
+TEST(AvoidDecision, RadarRejectsFreezingLethalAndUnhookableAnchors)
+{
+	EXPECT_TRUE(Avoid::RadarTargetIsHookable(TILE_SOLID));
+	EXPECT_TRUE(Avoid::RadarTargetIsHookable(TILE_NOLASER));
+	EXPECT_FALSE(Avoid::RadarTargetIsHookable(TILE_FREEZE));
+	EXPECT_FALSE(Avoid::RadarTargetIsHookable(TILE_DFREEZE));
+	EXPECT_FALSE(Avoid::RadarTargetIsHookable(TILE_LFREEZE));
+	EXPECT_FALSE(Avoid::RadarTargetIsHookable(TILE_DEATH));
+	EXPECT_FALSE(Avoid::RadarTargetIsHookable(TILE_NOHOOK));
+
+	// The reference writes `Tile & (TILE_DEATH | TILE_FREEZE)`, a mask over 2 | 9 = 11. Applied to a
+	// tile index that also rejects tile 1 (solid) and 11 (unfreeze), i.e. exactly the wall the radar
+	// is looking for and the refuge an unfreeze escape wants. The rules compare indices instead.
+	EXPECT_TRUE(Avoid::RadarTargetIsHookable(TILE_UNFREEZE));
+	EXPECT_TRUE(Avoid::RadarTargetIsHookable(TILE_TELEIN));
+	EXPECT_TRUE(Avoid::RadarTargetIsHookable(TILE_FINISH));
+	EXPECT_FALSE(Avoid::IsLethalOrFreezingTile(TILE_SOLID));
+	EXPECT_FALSE(Avoid::IsLethalOrFreezingTile(TILE_UNFREEZE));
+	EXPECT_FALSE(Avoid::IsLethalOrFreezingTile(TILE_NOHOOK));
+}
+
+TEST(AvoidDecision, HeadroomVetoesTheAirJumpUnderACeiling)
+{
+	// Open sky: the probe hit nothing, the air jump is allowed.
+	Avoid::SHeadroomProbe Clear;
+	EXPECT_TRUE(Avoid::HeadroomAllowsAirJump(Clear));
+
+	// A ceiling further away than the ray: still open enough.
+	Avoid::SHeadroomProbe High;
+	High.m_Hit = true;
+	High.m_Distance = Avoid::AIR_JUMP_HEADROOM;
+	High.m_HitTile = TILE_SOLID;
+	EXPECT_TRUE(Avoid::HeadroomAllowsAirJump(High));
+
+	// The threshold is one tile: 32 px is fine, anything closer bounces the tee back down.
+	Avoid::SHeadroomProbe Exact;
+	Exact.m_Hit = true;
+	Exact.m_Distance = Avoid::AIR_JUMP_MIN_CLEARANCE;
+	Exact.m_HitTile = TILE_SOLID;
+	EXPECT_TRUE(Avoid::HeadroomAllowsAirJump(Exact));
+
+	Avoid::SHeadroomProbe Low;
+	Low.m_Hit = true;
+	Low.m_Distance = Avoid::AIR_JUMP_MIN_CLEARANCE - 1.0f;
+	Low.m_HitTile = TILE_SOLID;
+	EXPECT_FALSE(Avoid::HeadroomAllowsAirJump(Low));
+
+	// A ceiling that freezes or kills vetoes the jump no matter how far away it is.
+	Avoid::SHeadroomProbe FreezingCeiling;
+	FreezingCeiling.m_Hit = true;
+	FreezingCeiling.m_Distance = Avoid::AIR_JUMP_HEADROOM;
+	FreezingCeiling.m_HitTile = TILE_FREEZE;
+	EXPECT_FALSE(Avoid::HeadroomAllowsAirJump(FreezingCeiling));
+
+	Avoid::SHeadroomProbe DeadlyCeiling = FreezingCeiling;
+	DeadlyCeiling.m_HitTile = TILE_DEATH;
+	EXPECT_FALSE(Avoid::HeadroomAllowsAirJump(DeadlyCeiling));
+
+	// Same for a lethal or freezing tile directly above the tee, which the ray may have missed.
+	Avoid::SHeadroomProbe Above;
+	Above.m_AboveTile = TILE_DFREEZE;
+	EXPECT_FALSE(Avoid::HeadroomAllowsAirJump(Above));
+	Above.m_AboveTile = TILE_DEATH;
+	EXPECT_FALSE(Avoid::HeadroomAllowsAirJump(Above));
+	Above.m_AboveTile = TILE_SOLID;
+	EXPECT_TRUE(Avoid::HeadroomAllowsAirJump(Above));
+
+	// The probe geometry of the reference: 48 px of headroom, one tile of minimum clearance.
+	EXPECT_FLOAT_EQ(Avoid::AIR_JUMP_HEADROOM, 48.0f);
+	EXPECT_FLOAT_EQ(Avoid::AIR_JUMP_MIN_CLEARANCE, 32.0f);
+}
+
+TEST(AvoidDecision, AirJumpAndRadarKeepTheirReferenceThresholds)
+{
+	// Reference spec 5.8: the injected jump has to buy at least 8 ticks over doing nothing.
+	EXPECT_EQ(Avoid::AIR_JUMP_MIN_GAIN_TICKS, 8);
+	// Reference spec 5.9: a radar candidate has to survive strictly more than 10 ticks.
+	EXPECT_EQ(Avoid::RADAR_MIN_SURVIVAL_TICKS, 10);
 }

@@ -139,10 +139,10 @@ namespace Avoid
 	// probes live in avoid_engine.cpp; only the decisions they feed are pinned down here.
 	// -------------------------------------------------------------------------------------
 
-	// TILE_FREEZE is 9 and TILE_DEATH is 2, TILE_NOHOOK is 3. The reference writes
-	// `Tile & (TILE_DEATH | TILE_FREEZE)`, which is a bit mask over 2 | 9 = 11 and therefore also
-	// matches tile 1 (solid), 3 (nohook), 8, 10 and 11 (unfreeze) - exactly the kind of mask the
-	// simulator must not use on a tile *index*. The three reads below compare indices instead.
+	// TILE_FREEZE is 9 and TILE_DEATH is 2, TILE_NOHOOK is 3. The reference ORs the first two into a
+	// bit mask and ANDs it onto the tile index; over 2 | 9 = 11 that mask also matches tile 1
+	// (solid), 3 (nohook), 8, 10 and 11 (unfreeze) - exactly the kind of mask the simulator must not
+	// use on a tile *index*. The three reads below compare indices instead.
 	inline bool IsFreezingTile(int Tile)
 	{
 		return Tile == TILE_FREEZE || Tile == TILE_DFREEZE || Tile == TILE_LFREEZE;

@@ -84,6 +84,32 @@ namespace Avoid
 			return pCollision->GetTileIndex(Index) == TILE_UNFREEZE || pCollision->GetFrontTileIndex(Index) == TILE_UNFREEZE;
 		}
 
+		// The tile the headroom probe and the escape radar have to judge. `GetCollisionAt()` only
+		// ever reports the four *solid* tiles (TILE_SOLID, TILE_DEATH, TILE_NOHOOK, TILE_NOLASER),
+		// and freezing is not one of them: asking it alone would rate a freezing ceiling or a wall
+		// with a freeze overlay as "safe to jump into / hang from", which is exactly the mistake the
+		// reference masks were meant to avoid. The raw game/front/switch indices are folded in
+		// first, so the pure rules see TILE_FREEZE / TILE_DFREEZE / TILE_LFREEZE / TILE_DEATH.
+		int ProbeTileAt(CCollision *pCollision, vec2 Pos)
+		{
+			if(!pCollision)
+				return TILE_DEATH;
+			const int Index = pCollision->GetPureMapIndex(Pos);
+			if(Index < 0)
+				return pCollision->GetCollisionAt(Pos.x, Pos.y);
+			const int aTiles[] = {
+				pCollision->GetTileIndex(Index),
+				pCollision->GetFrontTileIndex(Index),
+				pCollision->GetSwitchType(Index),
+			};
+			for(const int Tile : aTiles)
+			{
+				if(IsLethalOrFreezingTile(Tile))
+					return Tile;
+			}
+			return pCollision->GetCollisionAt(Pos.x, Pos.y);
+		}
+
 		bool IsFinishTile(CCollision *pCollision, int Index)
 		{
 			return pCollision->GetTileIndex(Index) == TILE_FINISH || pCollision->GetFrontTileIndex(Index) == TILE_FINISH;
@@ -657,14 +683,13 @@ namespace Avoid
 		const vec2 From = Pos;
 		const vec2 To = Pos - vec2(0.0f, RequiredHeight);
 		vec2 HitPos;
-		const int HitTile = pCollision->IntersectLine(From, To, &HitPos, nullptr);
-		if(HitTile != 0)
+		if(pCollision->IntersectLine(From, To, &HitPos, nullptr) != 0)
 		{
 			Probe.m_Hit = true;
 			Probe.m_Distance = distance(From, HitPos);
-			Probe.m_HitTile = HitTile;
+			Probe.m_HitTile = ProbeTileAt(pCollision, HitPos);
 		}
-		Probe.m_AboveTile = pCollision->GetCollisionAt(Pos.x, Pos.y - AIR_JUMP_MIN_CLEARANCE);
+		Probe.m_AboveTile = ProbeTileAt(pCollision, vec2(Pos.x, Pos.y - AIR_JUMP_MIN_CLEARANCE));
 
 		return HeadroomAllowsAirJump(Probe);
 	}
@@ -739,8 +764,10 @@ namespace Avoid
 			if(pCollision->IntersectLine(MyPos, MyPos + pEscapeDirs[i] * HOOK_MAX_DISTANCE, &HitPos, nullptr) == 0)
 				continue; // nothing solid on that ray
 
-			const int Tile = pCollision->GetCollisionAt(HitPos.x, HitPos.y);
-			if(!RadarTargetIsHookable(Tile))
+			// ProbeTileAt() rather than GetCollisionAt(): a wall whose front layer is freeze, or a
+			// lethal tile behind it, must not become an anchor just because the solid layer says
+			// "wall".
+			if(!RadarTargetIsHookable(ProbeTileAt(pCollision, HitPos)))
 				continue; // freezing, lethal or unhookable: anchoring there is worse than falling
 
 			CNetObj_PlayerInput Cand = CurrentInput;

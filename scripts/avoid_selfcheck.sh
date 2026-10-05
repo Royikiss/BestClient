@@ -357,8 +357,62 @@ assert "CandidateSurvival" in engine and "HumanSurvival" in engine
 assert "PlayerSurv" not in engine and "BestSurvHook0" not in engine, \
     "the Legit hook guard / Blatant preservation guards are back"
 
-# Blatant cascade (spec 7.6): kick-in hysteresis, auto drag, unfreeze escape, concurrent greedy
-# search, NSIF, best effort - in exactly that order.
+# ---------------------------------------------------------------------------------------------
+# v5.1 airborne rescue mechanisms (reference spec 5.7 - 5.9) and the 12 branch Cartesian action
+# space (spec 7.2). Without these three the agent watches a player who never releases the hook
+# swing into the freeze, can never spend an air jump on its own, and cannot grab a ceiling that the
+# crosshair is not pointing at - the exact three gaps this version closes.
+# ---------------------------------------------------------------------------------------------
+# The engine owns the world probes and the dispatcher-side wiring.
+for signature in ("bool CanUseAirJump(", "bool CheckPreemptiveHookRelease(", "bool CheckHeadroomClearance(",
+                  "bool TryEmergencyAirJump(", "bool TryEmergencyWallCeilingHook("):
+    assert signature in header, signature + " left the engine header"
+    assert signature in engine, signature + " left the engine"
+# 5.7: two lookaheads that differ in the hook bit only, and the hook is stolen only when that wins.
+assert "PreemptiveHookReleaseWins(" in decision, "the snatch rule left the decision header"
+assert "if(pChar->Core()->m_HookState != HOOK_GRABBED && CurrentInput.m_Hook == 0)" in engine, \
+    "the snatch no longer skips a tee that is neither hanging nor holding the key"
+assert "const int KeepSurvival = SimulateCandidate(pClient, pWorld, CandKeep, CheckTicks, Flags);" in engine
+assert "const int ReleaseSurvival = SimulateCandidate(pClient, pWorld, CandRelease, CheckTicks, Flags);" in engine
+assert "pOutInput->m_Hook = 0;" in engine, "the forced release no longer clears the hook key"
+# 5.8: air jump capability, the 48 px headroom probe and the gain threshold.
+assert "!(pChar->Core()->m_Jumped & 2) && !pChar->IsGrounded()" in engine, \
+    "the air jump capability check lost the m_Jumped bit that marks a spent air jump"
+assert "HeadroomAllowsAirJump(" in decision and "SHeadroomProbe" in decision
+assert "CheckHeadroomClearance(pWorld->Collision(), pChar->Core()->m_Pos, AIR_JUMP_HEADROOM)" in engine
+assert "AIR_JUMP_HEADROOM = 48.0f" in decision and "AIR_JUMP_MIN_CLEARANCE = 32.0f" in decision
+assert "AIR_JUMP_MIN_GAIN_TICKS = 8" in decision, "the air jump gain threshold left the reference value"
+assert "BestScore > Baseline && BestScore >= AIR_JUMP_MIN_GAIN_TICKS" in engine
+# 5.9: the five ray fan, the reach and the anchor filter.
+assert "EmergencyRadarDirs()" in decision and "EMERGENCY_RADAR_RAYS = 5" in decision
+assert "HOOK_MAX_DISTANCE = 380.0f" in decision and "RadarTargetIsHookable(" in decision
+assert "pEscapeDirs[i] * HOOK_MAX_DISTANCE" in engine, "the radar no longer uses the hook reach"
+assert "RADAR_MIN_SURVIVAL_TICKS = 10" in decision and "BestSurvival > RADAR_MIN_SURVIVAL_TICKS" in engine
+assert "Cand.m_Hook = 1; // force the hook out, whatever the player is pressing" in engine
+# The reference writes `Tile & (TILE_DEATH | TILE_FREEZE)`, a mask over 2 | 9 = 11, which also
+# matches tile 1 (solid) and 11 (unfreeze). The rules have to compare tile *indices*.
+assert "Tile == TILE_DEATH || IsFreezingTile(Tile)" in decision
+assert "& (TILE_DEATH | TILE_FREEZE)" not in decision and "& (TILE_FREEZE | TILE_DEATH | TILE_NOHOOK)" not in decision
+# 7.2: the Blatant action space is the full Cartesian product, jump axis included.
+assert "s_aDirs[3] = {0, -1, 1}" in decision, "the Blatant search lost the reference direction axis"
+assert "s_aJumps[2] = {0, 1}" in decision and "const int JumpCount = CanAirJump ? 2 : 1;" in decision
+assert "CanAirJump" in engine and \
+       "BuildBlatantCandidates(Ctx.m_Input, Set.m_BlatantDirection, Set.m_BlatantHook, CanAirJump, &vActions)" in engine, \
+    "the Blatant greedy search is back to a jump-less action space"
+assert "const bool CanAirJump = CanUseAirJump(pWorld, m_pClient->m_Snap.m_LocalClientId);" in engine
+# 8.3: the Legit tree opens the same air jump axis, and mounts the snatch before its arbitration.
+assert "BuildLegitCandidates(pCurr->m_Action, Set.m_LegitDirection, Set.m_LegitHook, CanAirJump, &vCandidates)" in engine, \
+    "the Legit MCTS no longer expands air jump nodes"
+legit_at = engine.index("AvoidInput CLegitAgent::GetAction(")
+legit_snatch_at = engine.index("CheckPreemptiveHookRelease(m_pClient, pWorld, Ctx.m_Input, &SnatchInput, CheckTicks, Flags)", legit_at)
+legit_arbitration_at = engine.index("ArbitrationGain(CandidateSurvival, HumanSurvival, LEGIT_ARBITRATION_TICKS)", legit_at)
+assert legit_at < legit_snatch_at < legit_arbitration_at, \
+    "the Legit snatch no longer runs between the search and the 26 tick arbitration"
+
+# Blatant cascade (spec 7.6): kick-in hysteresis, preemptive hook release, auto drag, emergency air
+# jump, upper hemisphere radar, unfreeze escape, concurrent greedy search, NSIF, best effort - in
+# exactly that order. The eight levels are what makes the tier aggressive; a level that moved below
+# another one is a level that no longer runs when the tee is already dying.
 assert "Set.m_KickInTicks" in engine and "m_SavedSafeSequence" in engine
 assert "s_aHooks[2] = {0, 1}" in decision
 assert "Set.m_AutoDrag" in engine and "auto drag a teammate" in engine, "auto drag (spec 7.3) is gone"
@@ -366,11 +420,21 @@ assert "FindNearestUnfreezeTile" in engine and "escape to an unfreeze tile" in e
     "the unfreeze escape (spec 7.4) is gone"
 assert "Set.m_Aimbot" in engine and "BestSurvivalAim" in engine and "BestNearAim" in engine
 kick_at = engine.index("const int KickScore = SimulateCandidate")
-drag_at = engine.index("// --- 2. Auto drag")
-unfreeze_at = engine.index("// --- 3. Unfreeze escape")
-greedy_at = engine.index("// --- 4. Greedy search")
-nsif_at = engine.index("// --- 5. NSIF")
-assert kick_at < drag_at < unfreeze_at < greedy_at < nsif_at, "the Blatant cascade lost its order"
+snatch_at = engine.index("// --- 2. Preemptive hook release")
+drag_at = engine.index("// --- 3. Auto drag")
+airjump_at = engine.index("// --- 4. Emergency air jump")
+radar_at = engine.index("// --- 5. Emergency upper hemisphere radar")
+unfreeze_at = engine.index("// --- 6. Unfreeze escape")
+greedy_at = engine.index("// --- 7. Greedy search")
+nsif_at = engine.index("// --- 8. NSIF")
+assert kick_at < snatch_at < drag_at < airjump_at < radar_at < unfreeze_at < greedy_at < nsif_at, \
+    "the Blatant cascade lost its order"
+assert "CheckPreemptiveHookRelease(m_pClient, pWorld, Ctx.m_Input, &SnatchInput, CheckTicks, Flags)" in engine, \
+    "the Blatant cascade no longer steals a hook that is about to swing the tee into the freeze"
+assert "TryEmergencyAirJump(m_pClient, pWorld, Ctx.m_Input, &JumpInput, CheckTicks, Flags)" in engine, \
+    "the Blatant cascade no longer spends the air jump on its own"
+assert "TryEmergencyWallCeilingHook(m_pClient, pWorld, Ctx.m_Input, &WallHookInput, CheckTicks, Flags)" in engine, \
+    "the Blatant cascade no longer reaches for the ceiling above the tee"
 # The candidate ring of one greedy round is simulated concurrently (0x14032eb50).
 assert "SimulateBranchesParallel(" in engine and "std::async(std::launch::async" in engine, \
     "the greedy search is no longer concurrent"
