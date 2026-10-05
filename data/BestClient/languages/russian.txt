@@ -1,4 +1,12 @@
 [BestClient]
+Track point already makes the bot sweep your field of view for a safer crosshair; the rest of the aim layer needs the internal aimbot on the Aimbot tab.
+== Одного Track point уже достаточно, чтобы бот просканировал поле зрения и нашёл более безопасное прицеливание; остальная часть прицельного слоя требует внутреннего аимбота на вкладке Aimbot.
+
+[BestClient]
+Check ticks is how far ahead every simulated move has to stay safe. Turning an assistance off keeps that part of your input exactly as you pressed it. A move is only taken over when it survives at least one tick longer than your own input over the next 26 ticks.
+== Check ticks — на сколько тиков вперёд каждое смоделированное действие должно оставаться безопасным. Отключение помощи оставляет эту часть ввода точно такой, как вы нажали. Бот перехватывает управление, только если выбранное действие выживает хотя бы на один тик дольше вашего ввода на протяжении следующих 26 тиков.
+
+[BestClient]
 Checkbox
 == Чекбокс
 
@@ -3211,8 +3219,8 @@ AFK
 == AFK
 
 [BestClient]
-Avoid: AFK protection disabled the bot
-== Avoid: защита от AFK отключила бота
+Avoid: AFK protection paused the bot
+== Avoid: защита от AFK приостановила бота
 
 [BestClient]
 Plan:
@@ -3287,8 +3295,8 @@ Player prediction
 == Предсказание игроков
 
 [BestClient]
-Player prediction makes every bot simulate the other tees as well; AFK protection switches the bot off after the configured idle time.
-== Предсказание игроков заставляет бота просчитывать и другие ти: защита от AFK выключает бота после заданного времени бездействия.
+Player prediction makes every bot simulate the other tees as well; AFK protection pauses the bot after the configured idle time.
+== Предсказание игроков заставляет бота просчитывать и другие ти: защита от AFK приостанавливает бота после заданного времени бездействия.
 
 [BestClient]
 Render track point
@@ -3305,10 +3313,6 @@ Basic only takes over the left and right keys. It always looks six ticks ahead, 
 [BestClient]
 It is the cheapest bot and the safe default for plain freeze rooms. Pick Legit for fine tuning, Blatant for maximum safety, Fentbot for long map segments or Pilot to let the tee drive itself.
 == Это самый дешёвый бот и надёжный выбор для простых комнат с заморозкой. Для тонкой настройки — Legit, для максимальной безопасности — Blatant, для длинных участков — Fentbot, чтобы ти ехал сам — Pilot.
-
-[BestClient]
-Check ticks is how far ahead every simulated move has to stay safe. Turning an assistance off keeps that part of your input exactly as you pressed it.
-== Тики проверки — сколько тиков каждое смоделированное действие обязано оставаться безопасным. Отключённая помощь оставляет эту часть ввода точно такой, как вы нажали.
 
 [BestClient]
 Priority
@@ -3477,4 +3481,80 @@ Track point, safe aim tracking and auto drag need the internal aimbot on the Aim
 [BestClient]
 safe
 == безопасно
+
+[BestClient]
+Tile Editor
+== Редактор тайлов
+
+[BestClient]
+Tile editor
+== Редактор тайлов
+
+[BestClient]
+Enable editor
+== Включить редактор
+
+[BestClient]
+Tile type
+== Тип тайла
+
+[BestClient]
+Tunnel
+== Туннель
+
+[BestClient]
+Finish
+== Финиш
+
+[BestClient]
+Auto tunnels
+== Авто-туннели
+
+[BestClient]
+Auto tunnel width
+== Ширина авто-туннеля
+
+[BestClient]
+Recalculate
+== Пересчитать
+
+[BestClient]
+Auto finish
+== Авто-финиш
+
+[BestClient]
+Clear all
+== Очистить всё
+
+[BestClient]
+Tunnel tiles
+== Тайлы туннеля
+
+[BestClient]
+Finish tiles
+== Тайлы финиша
+
+[BestClient]
+Avoid tile editor: all edited tiles cleared
+== Avoid tile editor: все изменённые тайлы очищены
+
+[BestClient]
+Avoid tile editor: finish tiles marked
+== Avoid tile editor: тайлы финиша отмечены
+
+[BestClient]
+Avoid tile editor: tunnel tiles marked
+== Avoid tile editor: тайлы туннеля отмечены
+
+[BestClient]
+Avoid tile editor: no TAS replay loaded
+== Avoid tile editor: TAS-реплей не загружен
+
+[BestClient]
+Avoid tile editor: pathfinding grid recalculated
+== Avoid tile editor: сетка поиска пути пересчитана
+
+[BestClient]
+Tunnel tiles are the only tiles Fentbot and Pilot may walk on, finish tiles are what they navigate to. With an empty editor the planner uses the finish tiles of the map and falls back to the unfreeze tiles. Turn the editor on and click in the world to paint, right click to erase; a loaded TAS replay can be turned into a tunnel with Auto tunnels.
+== По тайлам туннеля могут ходить только Fentbot и Pilot, а тайлы финиша — их цель. При пустом редакторе планировщик берёт тайлы финиша карты, а если их нет — тайлы разморозки. Включите редактор и кликайте по миру, чтобы рисовать, правая кнопка стирает; загруженный TAS-реплей можно превратить в туннель кнопкой «Авто-туннели».
 

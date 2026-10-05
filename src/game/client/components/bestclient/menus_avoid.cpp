@@ -90,6 +90,14 @@ void AvoidHintBottom(CUi *pUi, ITextRender *pTextRender, CUIRect *pRect, const c
 	AvoidHint(pUi, pTextRender, Rect, pText, Size);
 }
 
+// A plain action button. The reference exposes the same actions as console commands, so the button
+// only sets (or bumps) the state the component consumes on its next frame.
+int AvoidActionButton(CMenus *pMenus, int Id, CUIRect Row, const char *pLabel)
+{
+	static int s_aIds[16];
+	return pMenus->DoButton_CheckBox_Common(&s_aIds[Id % 16], pLabel, "", &Row, BUTTONFLAG_LEFT);
+}
+
 // A labelled checkbox row. `Id` keeps the button containers unique per row.
 void AvoidCheckBoxRow(CMenus *pMenus, int Id, CUIRect Row, const char *pLabel, int *pValue)
 {
@@ -139,6 +147,7 @@ enum EAvoidPanel
 	PANEL_BLATANT_TILES,
 	PANEL_BLATANT_AIMBOT,
 	PANEL_FENT_CALC,
+	PANEL_TILE_EDITOR,
 	PANEL_PILOT_MAIN,
 	PANEL_PILOT_SETTINGS,
 };
@@ -162,10 +171,12 @@ const SAvoidPanelDef g_aBlatantPanels[] = {
 };
 const SAvoidPanelDef g_aFentPanels[] = {
 	{PANEL_FENT_CALC, "Calculation"},
+	{PANEL_TILE_EDITOR, "Tile Editor"},
 };
 const SAvoidPanelDef g_aPilotPanels[] = {
 	{PANEL_PILOT_MAIN, "Main"},
 	{PANEL_PILOT_SETTINGS, "Settings"},
+	{PANEL_TILE_EDITOR, "Tile Editor"},
 };
 
 int AvoidPanelCount(int Agent)
@@ -255,6 +266,9 @@ const char *const g_aFentDefaultParams[] = {
 	"bc_avoid_fent_tweaker_dosage",
 	"bc_avoid_fent_light_tile",
 	"bc_avoid_fent_light_tile_radius",
+	"bc_avoid_tile_editor_enable",
+	"bc_avoid_tile_editor_type",
+	"bc_avoid_tile_editor_auto_tunnel_width",
 };
 
 const char *const g_aPilotDefaultParams[] = {
@@ -263,6 +277,9 @@ const char *const g_aPilotDefaultParams[] = {
 	"bc_avoid_pilot_depth",
 	"bc_avoid_pilot_top_k",
 	"bc_avoid_pilot_sequence",
+	"bc_avoid_tile_editor_enable",
+	"bc_avoid_tile_editor_type",
+	"bc_avoid_tile_editor_auto_tunnel_width",
 };
 
 const char *const *AvoidDefaultParams(int Agent, int *pCount)
@@ -397,7 +414,7 @@ void CMenus::RenderSettingsAvoid(CUIRect MainView)
 								  "Only takes over the left and right keys, six ticks ahead. No options of its own."),
 			10.0f, (LeftColumn.w - 16.0f) * 0.5f);
 		const float GeneralCopyHeight = AvoidHintHeight(TextRender(),
-			BcLocalize("Player prediction makes every bot simulate the other tees as well; AFK protection switches the bot off after the configured idle time."),
+			BcLocalize("Player prediction makes every bot simulate the other tees as well; AFK protection pauses the bot after the configured idle time."),
 			10.0f, LeftColumn.w - 16.0f);
 		const float aPreferred[3] = {
 			std::max(120.0f, 120.0f + AgentCopyHeight),
@@ -506,7 +523,7 @@ void CMenus::RenderSettingsAvoid(CUIRect MainView)
 
 			Content.HSplitTop(8.0f, nullptr, &Content);
 			AvoidHintBottom(Ui(), TextRender(), &Content,
-				BcLocalize("Player prediction makes every bot simulate the other tees as well; AFK protection switches the bot off after the configured idle time."), 10.0f);
+				BcLocalize("Player prediction makes every bot simulate the other tees as well; AFK protection pauses the bot after the configured idle time."), 10.0f);
 		}
 
 		// --- Visuals ------------------------------------------------------------------------
@@ -629,7 +646,7 @@ void CMenus::RenderSettingsAvoid(CUIRect MainView)
 
 			Content.HSplitTop(8.0f, nullptr, &Content);
 			AvoidHintBottom(Ui(), TextRender(), &Content,
-				BcLocalize("Check ticks is how far ahead every simulated move has to stay safe. Turning an assistance off keeps that part of your input exactly as you pressed it."), 10.0f);
+				BcLocalize("Check ticks is how far ahead every simulated move has to stay safe. Turning an assistance off keeps that part of your input exactly as you pressed it. A move is only taken over when it survives at least one tick longer than your own input over the next 26 ticks."), 10.0f);
 			break;
 		}
 
@@ -724,7 +741,7 @@ void CMenus::RenderSettingsAvoid(CUIRect MainView)
 			Content.HSplitTop(10.0f, nullptr, &Content);
 			const char *pAimHint = g_Config.m_BcAvoidAimbot ?
 						       BcLocalize("Track point keeps aiming where you last could hook onto a tile, and safe aim tracking only holds that aim while it stays safe.") :
-						       BcLocalize("Track point, safe aim tracking and auto drag need the internal aimbot on the Aimbot tab; without it they change nothing.");
+						       BcLocalize("Track point already makes the bot sweep your field of view for a safer crosshair; the rest of the aim layer needs the internal aimbot on the Aimbot tab.");
 			CUIRect AimHint;
 			Content.HSplitTop(std::min(AvoidHintHeight(TextRender(), pAimHint, 10.0f, Content.w), std::max(0.0f, Content.h)), &AimHint, &Content);
 			SLabelProperties AimProps;
@@ -827,6 +844,63 @@ void CMenus::RenderSettingsAvoid(CUIRect MainView)
 				AvoidHintBottom(Ui(), TextRender(), &Content,
 					BcLocalize("Fent ticks is how far the search plans ahead, Tweaker inputs how many candidate input sequences each generation has, Tweaker ticks how many ticks one candidate covers and Tweaker dosage how many generations are run. Higher values solve more, but take longer to converge."), 10.0f);
 			}
+			break;
+		}
+
+		// --------------------------------------------------------- Tile editor --------
+		case PANEL_TILE_EDITOR:
+		{
+			AvoidSectionTitle(Ui(), &Content, BcLocalize("Tile editor"));
+
+			CUIRect RowEnable;
+			Content.HSplitTop(22.0f, &RowEnable, &Content);
+			AvoidCheckBoxRow(this, 30, RowEnable, BcLocalize("Enable editor"), &g_Config.m_BcAvoidTileEditorEnable);
+
+			Content.HSplitTop(6.0f, nullptr, &Content);
+			AvoidSectionTitle(Ui(), &Content, BcLocalize("Tile type"));
+			CUIRect RowType;
+			Content.HSplitTop(24.0f, &RowType, &Content);
+			const char *apTileTypes[] = {BcLocalize("Tunnel"), BcLocalize("Finish")};
+			AvoidSegmented(this, 3, RowType, apTileTypes, 2, &g_Config.m_BcAvoidTileEditorType);
+
+			Content.HSplitTop(10.0f, nullptr, &Content);
+			AvoidSectionTitle(Ui(), &Content, BcLocalize("Auto tunnels"));
+			CUIRect RowWidth;
+			Content.HSplitTop(24.0f, &RowWidth, &Content);
+			Ui()->DoScrollbarOption(&g_Config.m_BcAvoidTileEditorAutoTunnelWidth, &g_Config.m_BcAvoidTileEditorAutoTunnelWidth, &RowWidth,
+				BcLocalize("Auto tunnel width"), 0, 10, &CUi::ms_LinearScrollbarScale, 0u, BcLocalize("tiles"));
+
+			Content.HSplitTop(10.0f, nullptr, &Content);
+			CUIRect RowActions, BtnRecalculate, BtnAutoFinish, BtnAutoTunnel, BtnClear;
+			Content.HSplitTop(22.0f, &RowActions, &Content);
+			RowActions.VSplitLeft(RowActions.w * 0.25f, &BtnRecalculate, &RowActions);
+			RowActions.VSplitLeft(RowActions.w / 3.0f, &BtnAutoFinish, &RowActions);
+			RowActions.VSplitLeft(RowActions.w * 0.5f, &BtnAutoTunnel, &RowActions);
+			BtnClear = RowActions;
+
+			if(AvoidActionButton(this, 0, BtnRecalculate, BcLocalize("Recalculate")))
+			{
+				// Bumping the revision is the whole recalculation: both planners rebuild their grid
+				// and their flow field on their next decision.
+				Avoid.TileEditor().Touch();
+				GameClient()->Echo(BcLocalize("Avoid tile editor: pathfinding grid recalculated"));
+			}
+			if(AvoidActionButton(this, 1, BtnAutoFinish, BcLocalize("Auto finish")))
+				g_Config.m_BcAvoidTileEditorAutoFinish = 1;
+			if(AvoidActionButton(this, 2, BtnAutoTunnel, BcLocalize("Auto tunnels")))
+				g_Config.m_BcAvoidTileEditorAutoTunnel = 1;
+			if(AvoidActionButton(this, 3, BtnClear, BcLocalize("Clear all")))
+				g_Config.m_BcAvoidTileEditorClear = 1;
+
+			Content.HSplitTop(8.0f, nullptr, &Content);
+			char aStatus[160];
+			str_format(aStatus, sizeof(aStatus), "%s: %d    %s: %d",
+				BcLocalize("Tunnel tiles"), Avoid.TileEditor().TunnelCount(),
+				BcLocalize("Finish tiles"), Avoid.TileEditor().FinishCount());
+			AvoidSectionTitle(Ui(), &Content, aStatus, 16.0f);
+
+			AvoidHintBottom(Ui(), TextRender(), &Content,
+				BcLocalize("Tunnel tiles are the only tiles Fentbot and Pilot may walk on, finish tiles are what they navigate to. With an empty editor the planner uses the finish tiles of the map and falls back to the unfreeze tiles. Turn the editor on and click in the world to paint, right click to erase; a loaded TAS replay can be turned into a tunnel with Auto tunnels."), 10.0f);
 			break;
 		}
 

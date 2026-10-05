@@ -1,23 +1,26 @@
 /* Copyright © 2026 BestProject Team */
 #include "avoid_engine.h"
 
+#include "avoid_tile_editor.h"
+
 #include <base/math.h>
 #include <base/str.h>
 #include <base/time.h>
 
 #include <engine/shared/config.h>
 
-#include <game/collision.h>
-#include <game/localization.h>
-#include <game/mapitems.h>
-
 #include <game/client/components/bestclient/fast_practice.h>
 #include <game/client/gameclient.h>
 #include <game/client/prediction/entities/character.h>
 #include <game/client/prediction/gameworld.h>
+#include <game/collision.h>
+#include <game/localization.h>
+#include <game/mapitems.h>
 
 #include <algorithm>
 #include <cmath>
+#include <future>
+#include <system_error>
 
 namespace Avoid
 {
@@ -102,9 +105,12 @@ namespace Avoid
 			const CCharacterCore *pCore = pChar->Core();
 			const vec2 Pos = pCore->m_Pos;
 
-			// Death comes first: a tile can be freeze on one layer and death on another, and the
-			// light-tile exemption below must never hide that. Both layers are probed because both
-			// of them kill, see CCharacter::HandleTiles.
+			// Death layer. Reference spec 4.1: `GetCollisionAt(Pos)` on the death layer. TILE_DEATH
+			// is a tile *index* (2), never a bit mask, so it has to be compared: a bitwise AND with
+			// it also matches tile 3 (nohook), 6, 7, 10, 11 (unfreeze), 14, 15 and 34 (finish) and
+			// would make the simulator report death on a finish tile.
+			// The same four corner probes the engine uses to kill a tee are probed here, so the
+			// simulation and the physics agree on when a death tile was touched.
 			if(Flags.m_AvoidDeath)
 			{
 				const float Rad = pChar->GetProximityRadius() / 3.0f;
@@ -112,26 +118,30 @@ namespace Avoid
 				const float aProbeY[] = {Pos.y, Pos.y + Rad, Pos.y + Rad, Pos.y - Rad, Pos.y - Rad};
 				for(int i = 0; i < 5; ++i)
 				{
-					if((pCollision->GetCollisionAt(aProbeX[i], aProbeY[i]) & TILE_DEATH) ||
-						(pCollision->GetFrontCollisionAt(aProbeX[i], aProbeY[i]) & TILE_DEATH))
+					if(pCollision->GetCollisionAt(aProbeX[i], aProbeY[i]) == TILE_DEATH ||
+						pCollision->GetFrontCollisionAt(aProbeX[i], aProbeY[i]) == TILE_DEATH)
 					{
 						return true;
 					}
 				}
 			}
 
-			// Freeze: normal freeze, deep freeze and live freeze all count as a failure, with one
-			// exception: the Fentbot may deliberately cross a freeze tile that has an unfreeze tile
-			// nearby, which is exactly what its light-tile rule puts on the grid. The exception is
-			// bound to a tee that is still moving through the tile, because a tee that came to rest
-			// on it is frozen rather than crossing, and the search must not rank "park in the
-			// freeze" as a perfect plan.
+			// Freeze. Reference spec 4.1 step 3 only looks at the three flags the tee itself
+			// carries: a running freeze timer, the "was unfrozen this tick" marker and deep freeze.
+			// The engine's own `m_IsInFreeze` / `m_LiveFrozen` bookkeeping is deliberately not part
+			// of it: `m_IsInFreeze` is also set for death tiles and for a tee that is already deep
+			// frozen, which would report a hazard for a state the tee cannot leave anyway.
+			//
+			// One exception exists, and only the Fentbot turns it on: crossing a freeze tile that
+			// has an unfreeze tile nearby is exactly what the light-tile rule of the navigator puts
+			// on the grid, so the simulator has to agree with it. The exemption is bound to a tee
+			// that is still moving through the tile, because a tee that came to rest on it is frozen
+			// rather than crossing, and the search must not rank "park in the freeze" as perfect.
 			if(Flags.m_AvoidFreeze &&
-				(pChar->m_FreezeTime > 0 || pChar->m_FrozenLastTick ||
-					pCore->m_IsInFreeze || pCore->m_DeepFrozen || pCore->m_LiveFrozen))
+				(pChar->m_FreezeTime > 0 || pChar->m_FrozenLastTick || pCore->m_DeepFrozen))
 			{
 				const bool Crossable = Flags.m_AllowLightFreeze && Flags.m_pNav &&
-						       !pCore->m_DeepFrozen && !pCore->m_LiveFrozen &&
+						       !pCore->m_DeepFrozen &&
 						       length(pCore->m_Vel) > LIGHT_FREEZE_MIN_SPEED &&
 						       Flags.m_pNav->IsLightTile(Pos);
 				if(!Crossable)
@@ -340,6 +350,60 @@ namespace Avoid
 		return false;
 	}
 
+	// Blatant (reference spec 7.4): the closest TILE_UNFREEZE inside RadiusTiles, breadth first over
+	// the map grid. Freeze tiles are passable on the way there - the whole point of the escape is to
+	// leave a freeze tile behind - but solid rock is not.
+	bool FindNearestUnfreezeTile(CCollision *pCollision, vec2 From, int RadiusTiles, vec2 *pOutCentre)
+	{
+		if(!pCollision || pCollision->GetWidth() <= 0 || pCollision->GetHeight() <= 0)
+			return false;
+
+		const int Width = pCollision->GetWidth();
+		const int Height = pCollision->GetHeight();
+		const int Radius = std::clamp(RadiusTiles, 0, 64);
+		const int StartX = std::clamp((int)(From.x / 32.0f), 0, Width - 1);
+		const int StartY = std::clamp((int)(From.y / 32.0f), 0, Height - 1);
+
+		std::vector<int> vQueue;
+		std::vector<unsigned char> vSeen((size_t)Width * (size_t)Height, 0);
+		vQueue.push_back(StartX + StartY * Width);
+		vSeen[(size_t)(StartX + StartY * Width)] = 1;
+
+		for(size_t Head = 0; Head < vQueue.size(); ++Head)
+		{
+			const int Index = vQueue[Head];
+			const int X = Index % Width;
+			const int Y = Index / Width;
+			if(std::abs(X - StartX) > Radius || std::abs(Y - StartY) > Radius)
+				continue;
+
+			if(!(X == StartX && Y == StartY) && IsUnfreezeTile(pCollision, Index))
+			{
+				if(pOutCentre)
+					*pOutCentre = vec2(((float)X + 0.5f) * 32.0f, ((float)Y + 0.5f) * 32.0f);
+				return true;
+			}
+
+			static const int s_aDx[4] = {-1, 1, 0, 0};
+			static const int s_aDy[4] = {0, 0, -1, 1};
+			for(int i = 0; i < 4; ++i)
+			{
+				const int Nx = X + s_aDx[i];
+				const int Ny = Y + s_aDy[i];
+				if(Nx < 0 || Nx >= Width || Ny < 0 || Ny >= Height)
+					continue;
+				const int Next = Nx + Ny * Width;
+				if(vSeen[(size_t)Next])
+					continue;
+				if(pCollision->IsSolid(Nx, Ny))
+					continue;
+				vSeen[(size_t)Next] = 1;
+				vQueue.push_back(Next);
+			}
+		}
+		return false;
+	}
+
 	// -----------------------------------------------------------------------------------------
 	// Forward simulator (reference spec 4.1)
 	// -----------------------------------------------------------------------------------------
@@ -376,6 +440,345 @@ namespace Avoid
 		Sim.SetPredictPlayers(Flags.m_PredictPlayers);
 
 		return RunPlan(Sim, pInputs, NumInputs, CheckTicks, Flags, pFlow, pOutFlowScore, pvPath, pOutEndPos);
+	}
+
+	namespace
+	{
+		// Reference spec 7.5 (0x14032eb50): the branches of one greedy round do not depend on each
+		// other, so they are simulated at the same time. Every branch clones its own world and only
+		// reads the base world; the collision, tuning and map data they share are read-only and the
+		// prediction world touches no client component at all. Spawning is inside the try so that a
+		// machine that cannot give us the threads simply falls back to a sequential round instead
+		// of dropping the decision.
+		std::vector<int> SimulateBranchesParallel(
+			CGameClient *pClient,
+			CGameWorld *pBaseWorld,
+			const std::vector<CNetObj_PlayerInput> &vCandidates,
+			int CheckTicks,
+			const SSimFlags &Flags)
+		{
+			std::vector<int> vResults(vCandidates.size(), 0);
+			if(vCandidates.empty())
+				return vResults;
+
+			// One branch is cheaper inline than on a worker thread.
+			if(vCandidates.size() == 1)
+			{
+				vResults[0] = SimulateCandidate(pClient, pBaseWorld, vCandidates[0], CheckTicks, Flags);
+				return vResults;
+			}
+
+			std::vector<std::future<int>> vFutures;
+			vFutures.reserve(vCandidates.size());
+			bool Spawned = true;
+			try
+			{
+				for(const CNetObj_PlayerInput &Candidate : vCandidates)
+				{
+					const CNetObj_PlayerInput Branch = Candidate;
+					vFutures.push_back(std::async(std::launch::async, [pClient, pBaseWorld, Branch, CheckTicks, Flags]() {
+						return SimulateCandidate(pClient, pBaseWorld, Branch, CheckTicks, Flags);
+					}));
+				}
+			}
+			catch(const std::system_error &)
+			{
+				Spawned = false;
+			}
+
+			if(!Spawned)
+			{
+				// Drain whatever was already handed out, then redo the round on this thread.
+				for(std::future<int> &Future : vFutures)
+					Future.wait();
+				for(size_t i = 0; i < vCandidates.size(); ++i)
+					vResults[i] = SimulateCandidate(pClient, pBaseWorld, vCandidates[i], CheckTicks, Flags);
+				return vResults;
+			}
+
+			for(size_t i = 0; i < vFutures.size(); ++i)
+				vResults[i] = vFutures[i].get();
+			return vResults;
+		}
+	} // namespace
+
+	// -----------------------------------------------------------------------------------------
+	// Pre-activation pipeline (reference spec 5)
+	// -----------------------------------------------------------------------------------------
+
+	int RunLightweightProbe(CGameClient *pClient, CGameWorld *pBaseWorld, const CNetObj_PlayerInput &Input, const SSettings &Set)
+	{
+		// Reference spec 5.5, assembly 0x140312258: a fixed 10 tick lookahead over the player's own
+		// input, with the lethal death layer switched on and the teleport layer left out so the
+		// probe stays cheap.
+		SSimFlags Flags;
+		Flags.m_PredictPlayers = Set.m_PlayerPrediction;
+		Flags.m_AvoidFreeze = true;
+		Flags.m_AvoidDeath = true;
+		Flags.m_AvoidTeles = false;
+
+		const int Survival = SimulateCandidate(pClient, pBaseWorld, Input, PROBE_CHECK_TICKS, Flags);
+		// 0x14031226d: `cmp eax, 0x7; jge` - surviving at least PROBE_SAFE_TICKS of the window is
+		// reported as fully safe, which makes the dispatcher leave the input alone.
+		return ProbeIsSafe(Survival) ? SIMULATION_SAFE_CONSTANT : Survival;
+	}
+
+	bool RunSectorScan(CGameClient *pClient, CGameWorld *pBaseWorld, CNetObj_PlayerInput *pInput, const SSettings &Set, SAimMarker *pOutAim)
+	{
+		if(!pBaseWorld || !pInput)
+			return false;
+
+		// Reference spec 5.6: stage 2 exists for the two features that live off the crosshair.
+		if(!Set.m_TrackPoint && !Set.m_Aimbot)
+			return false;
+
+		const int Segments = std::max(1, Set.m_AimbotSegments);
+		const float FovRad = (float)Set.m_AimbotFov * (pi / 180.0f);
+		const float BaseAngle = std::atan2((float)pInput->m_TargetY, (float)pInput->m_TargetX);
+
+		SSimFlags Flags;
+		Flags.m_PredictPlayers = Set.m_PlayerPrediction;
+		Flags.m_AvoidFreeze = true;
+		Flags.m_AvoidDeath = true;
+		Flags.m_AvoidTeles = false;
+
+		int BestScore = -1;
+		int BestIndex = -1;
+		for(int Index = 0; Index <= Segments; ++Index)
+		{
+			const float Angle = SectorScanAngle(BaseAngle, FovRad, Segments, Index);
+			const vec2 Aim(std::cos(Angle), std::sin(Angle));
+
+			CNetObj_PlayerInput Candidate = *pInput;
+			Candidate.m_TargetX = (int)(Aim.x * 300.0f);
+			Candidate.m_TargetY = (int)(Aim.y * 300.0f);
+			Candidate.m_Hook = 1;
+
+			// Fixed 21 tick anchor probe (assembly `mov edx, 0x15`).
+			const int Score = SimulateCandidate(pClient, pBaseWorld, Candidate, SECTOR_SCAN_TICKS, Flags);
+			if(Score > BestScore)
+			{
+				BestScore = Score;
+				BestIndex = Index;
+			}
+		}
+
+		if(BestIndex < 0)
+			return true;
+
+		// Reference spec 5.6: without safe aim tracking a ray that bought a single tick is already
+		// accepted, with it only a ray that survived the whole scan window is.
+		const bool Accept = BestScore == SIMULATION_SAFE_CONSTANT ||
+				    (!Set.m_SafeAimTracking && BestScore > 0);
+		if(!Accept)
+			return true;
+
+		const float Angle = SectorScanAngle(BaseAngle, FovRad, Segments, BestIndex);
+		const vec2 Aim(std::cos(Angle), std::sin(Angle));
+		const int TargetX = (int)(Aim.x * 300.0f);
+		const int TargetY = (int)(Aim.y * 300.0f);
+		if(TargetX == pInput->m_TargetX && TargetY == pInput->m_TargetY)
+			return true;
+
+		pInput->m_TargetX = TargetX;
+		pInput->m_TargetY = TargetY;
+
+		if(pOutAim)
+		{
+			if(const CCharacter *pChar = pBaseWorld->GetCharacterById(pClient->m_Snap.m_LocalClientId))
+			{
+				pOutAim->m_Valid = true;
+				pOutAim->m_Pos = pChar->Core()->m_Pos + Aim * 128.0f;
+			}
+		}
+		return true;
+	}
+
+	// -----------------------------------------------------------------------------------------
+	// v5.1 airborne rescue mechanisms (reference spec 5.7 - 5.9)
+	// -----------------------------------------------------------------------------------------
+
+	bool CanUseAirJump(CGameWorld *pWorld, int LocalClientId)
+	{
+		if(!pWorld)
+			return false;
+		CCharacter *pChar = pWorld->GetCharacterById(LocalClientId);
+		if(!pChar)
+			return false;
+		// Reference spec 5.8: bit 2 of m_Jumped is the "all air jumps used up" flag (the tee gets
+		// dark feet), bit 1 only records that a jump was made on the key that is held right now.
+		return !(pChar->Core()->m_Jumped & 2) && !pChar->IsGrounded();
+	}
+
+	// Reference spec 5.7: the pendulum rescue. The two branches differ in exactly one bit of the
+	// input, so the player's direction and crosshair are never touched by it.
+	bool CheckPreemptiveHookRelease(CGameClient *pClient, CGameWorld *pWorld, const CNetObj_PlayerInput &CurrentInput, CNetObj_PlayerInput *pOutInput, int CheckTicks, const SSimFlags &Flags)
+	{
+		if(!pClient || !pWorld || !pOutInput)
+			return false;
+
+		CCharacter *pChar = pWorld->GetCharacterById(pClient->m_Snap.m_LocalClientId);
+		if(!pChar)
+			return false;
+
+		// The rescue only applies to a tee that is hanging from a hook, or to a player who is
+		// holding the hook key right now. Anyone else has no pendulum to interrupt.
+		if(pChar->Core()->m_HookState != HOOK_GRABBED && CurrentInput.m_Hook == 0)
+			return false;
+
+		// Branch A: keep holding the hook (the player's own intent).
+		CNetObj_PlayerInput CandKeep = CurrentInput;
+		CandKeep.m_Hook = 1;
+		const int KeepSurvival = SimulateCandidate(pClient, pWorld, CandKeep, CheckTicks, Flags);
+
+		// Branch B: let go right now and fly off on the tangent.
+		CNetObj_PlayerInput CandRelease = CurrentInput;
+		CandRelease.m_Hook = 0;
+		const int ReleaseSurvival = SimulateCandidate(pClient, pWorld, CandRelease, CheckTicks, Flags);
+
+		// Assembly 0x1403286f0 - 0x1403289e0: the hook key is taken away only when holding on
+		// freezes the tee inside the window and letting go measurably outlives it.
+		if(!PreemptiveHookReleaseWins(KeepSurvival, ReleaseSurvival, CheckTicks))
+			return false;
+
+		*pOutInput = CandRelease;
+		pOutInput->m_Hook = 0; // force the hook off, whatever the player is pressing
+		return true;
+	}
+
+	bool CheckHeadroomClearance(CCollision *pCollision, vec2 Pos, float RequiredHeight)
+	{
+		if(!pCollision)
+			return false;
+
+		// Reference spec 5.8: one ray straight up over the whole headroom, plus the tile directly
+		// above the tee. Both feed the pure rules of SHeadroomProbe.
+		SHeadroomProbe Probe;
+		const vec2 From = Pos;
+		const vec2 To = Pos - vec2(0.0f, RequiredHeight);
+		vec2 HitPos;
+		const int HitTile = pCollision->IntersectLine(From, To, &HitPos, nullptr);
+		if(HitTile != 0)
+		{
+			Probe.m_Hit = true;
+			Probe.m_Distance = distance(From, HitPos);
+			Probe.m_HitTile = HitTile;
+		}
+		Probe.m_AboveTile = pCollision->GetCollisionAt(Pos.x, Pos.y - AIR_JUMP_MIN_CLEARANCE);
+
+		return HeadroomAllowsAirJump(Probe);
+	}
+
+	bool TryEmergencyAirJump(CGameClient *pClient, CGameWorld *pWorld, const CNetObj_PlayerInput &CurrentInput, CNetObj_PlayerInput *pOutInput, int CheckTicks, const SSimFlags &Flags)
+	{
+		if(!pClient || !pWorld || !pOutInput)
+			return false;
+
+		CCharacter *pChar = pWorld->GetCharacterById(pClient->m_Snap.m_LocalClientId);
+		if(!pChar)
+			return false;
+
+		// 1. The tee has to own an unused air jump - a grounded tee has nothing to inject.
+		if(!CanUseAirJump(pWorld, pClient->m_Snap.m_LocalClientId))
+			return false;
+
+		// 2. ... and it needs room above, otherwise the jump bounces it straight back into the
+		// hazard it is trying to leave (reference spec 5.8, headroom probe).
+		if(!CheckHeadroomClearance(pWorld->Collision(), pChar->Core()->m_Pos, AIR_JUMP_HEADROOM))
+			return false;
+
+		// 3. Inject the jump over the three directions and keep the one that survives longest.
+		int BestScore = -1;
+		CNetObj_PlayerInput BestAct = CurrentInput;
+		for(const int Dir : {-1, 0, 1})
+		{
+			CNetObj_PlayerInput Cand = CurrentInput;
+			Cand.m_Direction = Dir;
+			Cand.m_Jump = 1; // the impulse itself: m_Vel.y = -m_Tuning.m_AirJumpImpulse
+			const int Score = SimulateCandidate(pClient, pWorld, Cand, CheckTicks, Flags);
+			if(Score > BestScore)
+			{
+				BestScore = Score;
+				BestAct = Cand;
+			}
+		}
+
+		const int Baseline = SimulateCandidate(pClient, pWorld, CurrentInput, CheckTicks, Flags);
+
+		// Reference spec 5.8: only a significant improvement spends the one air jump the tee has.
+		if(BestScore > Baseline && BestScore >= AIR_JUMP_MIN_GAIN_TICKS)
+		{
+			*pOutInput = BestAct;
+			return true;
+		}
+		return false;
+	}
+
+	bool TryEmergencyWallCeilingHook(CGameClient *pClient, CGameWorld *pWorld, const CNetObj_PlayerInput &CurrentInput, CNetObj_PlayerInput *pOutInput, int CheckTicks, const SSimFlags &Flags)
+	{
+		if(!pClient || !pWorld || !pOutInput)
+			return false;
+
+		CCharacter *pLocal = pWorld->GetCharacterById(pClient->m_Snap.m_LocalClientId);
+		CCollision *pCollision = pWorld->Collision();
+		if(!pLocal || !pCollision)
+			return false;
+
+		const vec2 MyPos = pLocal->Core()->m_Pos;
+		const vec2 *pEscapeDirs = EmergencyRadarDirs();
+
+		int BestSurvival = -1;
+		CNetObj_PlayerInput BestInput = CurrentInput;
+		bool FoundSafeHook = false;
+
+		for(int i = 0; i < EMERGENCY_RADAR_RAYS && !FoundSafeHook; ++i)
+		{
+			// Reference spec 5.9: the ray is cast from the tee itself, up to the maximum hook
+			// reach, and the crosshair plays no part in it at all.
+			vec2 HitPos;
+			if(pCollision->IntersectLine(MyPos, MyPos + pEscapeDirs[i] * HOOK_MAX_DISTANCE, &HitPos, nullptr) == 0)
+				continue; // nothing solid on that ray
+
+			const int Tile = pCollision->GetCollisionAt(HitPos.x, HitPos.y);
+			if(!RadarTargetIsHookable(Tile))
+				continue; // freezing, lethal or unhookable: anchoring there is worse than falling
+
+			CNetObj_PlayerInput Cand = CurrentInput;
+			Cand.m_TargetX = (int)(HitPos.x - MyPos.x);
+			Cand.m_TargetY = (int)(HitPos.y - MyPos.y);
+			Cand.m_Hook = 1; // force the hook out, whatever the player is pressing
+			if(Cand.m_TargetX == 0 && Cand.m_TargetY == 0)
+				Cand.m_TargetY = -1;
+
+			// The pull is assisted with the horizontal key that points at the anchor: neutral
+			// first, then the matching direction (reference spec 5.9).
+			const int Lean = pEscapeDirs[i].x < 0.0f ? -1 : 1;
+			const int aLeanDirs[2] = {0, Lean};
+			for(const int Dir : aLeanDirs)
+			{
+				Cand.m_Direction = Dir;
+				const int Score = SimulateCandidate(pClient, pWorld, Cand, CheckTicks, Flags);
+				if(Score > BestSurvival)
+				{
+					BestSurvival = Score;
+					BestInput = Cand;
+					if(Score == SIMULATION_SAFE_CONSTANT)
+					{
+						FoundSafeHook = true;
+						break;
+					}
+				}
+			}
+		}
+
+		// Reference spec 5.9: a candidate has to survive strictly more than ten ticks before it
+		// replaces the player's own input.
+		if(BestSurvival > RADAR_MIN_SURVIVAL_TICKS)
+		{
+			*pOutInput = BestInput;
+			return true;
+		}
+		return false;
 	}
 
 	bool CSimSession::Begin(
@@ -522,11 +925,13 @@ namespace Avoid
 		m_Building = false;
 	}
 
-	void CNavigator::Rebuild(CCollision *pCollision, bool LightTile, int LightRadius)
+	void CNavigator::Rebuild(CCollision *pCollision, bool LightTile, int LightRadius, const CTileEditor *pEditor)
 	{
 		Reset();
 		m_LightTile = LightTile;
 		m_LightRadius = std::clamp(LightRadius, 0, 20);
+		m_pEditor = pEditor;
+		m_EditorRevision = pEditor ? pEditor->Revision() : 0;
 		if(!pCollision || pCollision->GetWidth() <= 0 || pCollision->GetHeight() <= 0)
 			return;
 
@@ -552,9 +957,17 @@ namespace Avoid
 			const int Y = m_Cursor / m_Width;
 			unsigned char Cell = NAV_BLOCKED;
 
-			if(!pCollision->IsSolid(X, Y) && !IsDeathTile(pCollision, m_Cursor))
+			// Tile editor (reference spec 9): as soon as the editor defines a tunnel, every tile
+			// outside of it is a wall for the planner, and a finish tile the editor marked is a
+			// goal even when the map itself has no TILE_FINISH there. A goal always stays walkable,
+			// otherwise a finish tile the user painted outside the tube could never be reached and
+			// the field would end up without a single goal.
+			const bool InsideTunnel = !m_pEditor || !m_pEditor->HasTunnels() || m_pEditor->IsTunnel(X, Y);
+			const bool EditorGoal = m_pEditor && m_pEditor->IsFinish(X, Y);
+
+			if((InsideTunnel || EditorGoal) && !pCollision->IsSolid(X, Y) && !IsDeathTile(pCollision, m_Cursor))
 			{
-				if(IsFinishTile(pCollision, m_Cursor))
+				if(EditorGoal || IsFinishTile(pCollision, m_Cursor))
 				{
 					Cell = NAV_GOAL;
 					m_GoalTiles++;
@@ -703,7 +1116,9 @@ namespace Avoid
 		case PHASE_MARK_LIGHT:
 			if(StepMarkLight(pCollision))
 			{
-				// Goals: finish tiles when the map has them, unfreeze tiles otherwise.
+				// Goals: finish tiles (from the map or from the tile editor) when there are any,
+				// unfreeze tiles otherwise. The fallback is confined to the tunnel as well, so a
+				// goal can never sit outside the area the planner is allowed to walk in.
 				std::vector<int> vGoals;
 				for(size_t i = 0; i < m_vGrid.size(); ++i)
 				{
@@ -714,6 +1129,10 @@ namespace Avoid
 				{
 					for(size_t i = 0; i < m_vGrid.size(); ++i)
 					{
+						const int X = (int)i % m_Width;
+						const int Y = (int)i / m_Width;
+						if(m_pEditor && m_pEditor->HasTunnels() && !m_pEditor->IsTunnel(X, Y))
+							continue;
 						if(IsUnfreezeTile(pCollision, (int)i))
 						{
 							m_vGrid[i] = NAV_GOAL;
@@ -872,7 +1291,7 @@ namespace Avoid
 	}
 
 	// -----------------------------------------------------------------------------------------
-	// 2. Blatant agent (reference spec 6)
+	// 2. Blatant agent (reference spec 7)
 	// -----------------------------------------------------------------------------------------
 
 	void CBlatantAgent::OnReset()
@@ -894,6 +1313,8 @@ namespace Avoid
 			return Out;
 		}
 
+		// Reference spec 7.6: freeze is the hazard, death and teleport tiles are optional, and the
+		// unfreeze switch is not a hazard at all - it is the escape of step 3 below.
 		SSimFlags Flags;
 		Flags.m_PredictPlayers = Set.m_PlayerPrediction;
 		Flags.m_AvoidFreeze = true;
@@ -912,6 +1333,7 @@ namespace Avoid
 		const vec2 Pos = pLocal->Core()->m_Pos;
 		const float HookLength = pLocal->Core()->m_Tuning.m_HookLength;
 		const vec2 PlayerAim = AimDirection(Ctx.m_Input.m_TargetX, Ctx.m_Input.m_TargetY);
+		const int CheckTicks = Set.m_BlatantCheckTicks;
 
 		// Track point: remember the last aim direction of the player that was hookable onto a tile.
 		if(Set.m_TrackPoint)
@@ -933,10 +1355,13 @@ namespace Avoid
 			Out.m_TrackPoint.m_Pos = m_TrackPointPos;
 		}
 
-		// 1. Kick in ticks: stay out of the way while the player input is safe for that long.
-		const int KickSafety = SimulateCandidate(m_pClient, pWorld, Ctx.m_Input, Set.m_KickInTicks, Flags,
+		// --- 1. Kick in ticks hysteresis (reference spec 7.1, 0x14032db51). -------------------
+		// As long as the player's own input survives the whole kick-in window the agent does not
+		// touch it. This is what keeps the bot from "helping" while the player is simply walking.
+		const int KickScore = SimulateCandidate(m_pClient, pWorld, Ctx.m_Input, Set.m_KickInTicks, Flags,
 			Set.m_DrawPath ? &Out.m_vPath : nullptr);
-		if(KickSafety == SIMULATION_SAFE_CONSTANT)
+		const int KickSafety = KickScore == SIMULATION_SAFE_CONSTANT ? Set.m_KickInTicks : KickScore;
+		if(KickScore == SIMULATION_SAFE_CONSTANT || KickSafety >= Set.m_KickInTicks)
 		{
 			m_SavedSafeSequence.clear();
 			Out.m_SurvivalTicks = Set.m_KickInTicks;
@@ -944,57 +1369,223 @@ namespace Avoid
 			return Out;
 		}
 
-		const int CheckTicks = Set.m_BlatantCheckTicks;
-
-		// 2. Candidate actions: direction x hook, in the reference order.
-		static const int s_aDirs[3] = {0, -1, 1};
-		static const int s_aHooks[2] = {0, 1};
-		const int DirCount = Set.m_BlatantDirection ? 3 : 1;
-		const int HookCount = Set.m_BlatantHook ? 2 : 1;
-
-		std::vector<CNetObj_PlayerInput> vActions;
-		vActions.reserve((size_t)DirCount * (size_t)HookCount);
-		for(int d = 0; d < DirCount; ++d)
+		// Direction braking margin: If the player is moving horizontally (Direction != 0),
+		// check whether executing the player's chosen input for this tick followed by braking
+		// on the subsequent tick remains completely safe for the lookahead window.
+		// When a hazard is still several tiles ahead, the player has full braking margin and
+		// must NOT have their direction seized prematurely.
+		if(Ctx.m_Input.m_Direction != 0)
 		{
-			for(int h = 0; h < HookCount; ++h)
+			CNetObj_PlayerInput aPlan[2];
+			aPlan[0] = Ctx.m_Input; // Tick 0: player's intended movement
+			aPlan[1] = Ctx.m_Input; // Tick 1+: brake
+			aPlan[1].m_Direction = 0;
+			const int BrakeScore = SimulatePlan(m_pClient, pWorld, aPlan, 2, Set.m_KickInTicks, Flags);
+			if(BrakeScore == SIMULATION_SAFE_CONSTANT)
 			{
-				CNetObj_PlayerInput Act = Ctx.m_Input;
-				if(Set.m_BlatantDirection)
-					Act.m_Direction = s_aDirs[d];
-				if(Set.m_BlatantHook)
-					Act.m_Hook = s_aHooks[h];
-				vActions.push_back(Act);
+				m_SavedSafeSequence.clear();
+				Out.m_SurvivalTicks = Set.m_KickInTicks;
+				str_copy(Out.m_aReason, "player input safe");
+				return Out;
 			}
 		}
 
-		int BestSurvival = -1;
+		// --- 2. Preemptive hook release (reference spec 5.7, 0x1403286f0). ---------------------
+		// The tee hangs from a hook and holding it would swing it into the freeze inside the check
+		// window while letting go would not: the hook key is taken away here, before any search.
+		// This is the rescue for a player who never lets go of the hook key: without it the agent
+		// could only watch the pendulum carry the tee into the pool.
+		{
+			CNetObj_PlayerInput SnatchInput = Ctx.m_Input;
+			if(CheckPreemptiveHookRelease(m_pClient, pWorld, Ctx.m_Input, &SnatchInput, CheckTicks, Flags))
+			{
+				Out.m_Input = SnatchInput;
+				Out.m_Active = 1;
+				Out.m_SurvivalTicks = CheckTicks;
+				str_copy(Out.m_aReason, "release the hook before the swing");
+				if(Set.m_DrawPath)
+					SimulateCandidate(m_pClient, pWorld, Out.m_Input, CheckTicks, Flags, &Out.m_vPath);
+				return Out;
+			}
+		}
+
+		// The greedy search of step 7 evaluates candidates and chooses the best safe action. The
+		// score is handed in because step 7b simulates its whole branch ring at once.
+		int BestSurvival = KickSafety;
 		CNetObj_PlayerInput BestAction = Ctx.m_Input;
 		bool FoundSafe = false;
 		bool BestFromAimbot = false;
-
-		for(const CNetObj_PlayerInput &Action : vActions)
-		{
-			const int Score = SimulateCandidate(m_pClient, pWorld, Action, CheckTicks, Flags);
+		auto Consider = [&](const CNetObj_PlayerInput &Candidate, int Score, bool FromAimbot) {
 			const int Survival = Score == SIMULATION_SAFE_CONSTANT ? CheckTicks : Score;
+
+			bool Replace = false;
 			if(Survival > BestSurvival)
 			{
-				BestSurvival = Survival;
-				BestAction = Action;
-				BestFromAimbot = false;
+				Replace = true;
 			}
-			if(Score == SIMULATION_SAFE_CONSTANT)
-				FoundSafe = true;
+			else if(Survival == BestSurvival)
+			{
+				// Tie breaker among candidates with equal survival:
+				// Prefer keeping the player's hook first, then direction (without sacrificing hook).
+				const bool CandPreservesHook = (Candidate.m_Hook == Ctx.m_Input.m_Hook);
+				const bool BestPreservesHook = (BestAction.m_Hook == Ctx.m_Input.m_Hook);
+				const bool CandPreservesDir = (Candidate.m_Direction == Ctx.m_Input.m_Direction);
+				const bool BestPreservesDir = (BestAction.m_Direction == Ctx.m_Input.m_Direction);
+
+				if(CandPreservesHook && !BestPreservesHook)
+				{
+					Replace = true;
+				}
+				else if(CandPreservesHook == BestPreservesHook)
+				{
+					if(CandPreservesDir && !BestPreservesDir)
+						Replace = true;
+				}
+			}
+
+			if(Replace)
+			{
+				BestSurvival = Survival;
+				BestAction = Candidate;
+				BestFromAimbot = FromAimbot;
+				if(Score == SIMULATION_SAFE_CONSTANT)
+					FoundSafe = true;
+			}
+		};
+
+		// --- 3. Auto drag (reference spec 7.3, 0x140330550 & 0x14032d600). ---------------------
+		// Scan every other tee of the world, and hook the first one that is inside the maximum hook
+		// reach and far enough away to actually be hooked. Teammate or not does not matter to the
+		// reference: it is the pull that has to carry the player out of the hazard, and that is
+		// verified with the full check window before the rescue is used.
+		if(Set.m_AutoDrag)
+		{
+			for(int i = 0; i < MAX_CLIENTS; ++i)
+			{
+				if(i == m_pClient->m_Snap.m_LocalClientId)
+					continue;
+				CCharacter *pTeammate = pWorld->GetCharacterById(i);
+				if(!pTeammate)
+					continue;
+
+				const vec2 TeamPos = pTeammate->Core()->m_Pos;
+				const float Dist = distance(Pos, TeamPos);
+				if(Dist > AUTO_DRAG_MAX_DIST || Dist < AUTO_DRAG_MIN_DIST)
+					continue;
+
+				const CNetObj_PlayerInput Drag = BuildApproachInput(Ctx.m_Input, Pos, TeamPos, true);
+				if(SimulateCandidate(m_pClient, pWorld, Drag, CheckTicks, Flags) == SIMULATION_SAFE_CONSTANT)
+				{
+					Out.m_Input = Drag;
+					Out.m_Active = 1;
+					Out.m_SurvivalTicks = CheckTicks;
+					Out.m_AimTarget.m_Valid = true;
+					Out.m_AimTarget.m_Pos = TeamPos;
+					str_copy(Out.m_aReason, "auto drag a teammate");
+					if(Set.m_DrawPath)
+						SimulateCandidate(m_pClient, pWorld, Out.m_Input, CheckTicks, Flags, &Out.m_vPath);
+					return Out;
+				}
+			}
 		}
 
-		// 3. Internal aim layer: only active while the internal aimbot is switched on. Everything
-		// below produces *candidate* aim directions; the survival search still decides which of
-		// them is actually used, so an aim switch can never make the bot less safe.
-		if(Set.m_Aimbot)
+		// --- 4. Emergency air jump (reference spec 5.8). --------------------------------------
+		// The tee is falling and still owns its air jump, and there is room above it: spending the
+		// jump here is what turns a doomed fall around. Without this stage the agent could only
+		// jump if the player happened to be pressing the key itself.
+		{
+			CNetObj_PlayerInput JumpInput = Ctx.m_Input;
+			if(TryEmergencyAirJump(m_pClient, pWorld, Ctx.m_Input, &JumpInput, CheckTicks, Flags))
+			{
+				Out.m_Input = JumpInput;
+				Out.m_Active = 1;
+				Out.m_SurvivalTicks = CheckTicks;
+				str_copy(Out.m_aReason, "spend the air jump");
+				if(Set.m_DrawPath)
+					SimulateCandidate(m_pClient, pWorld, Out.m_Input, CheckTicks, Flags, &Out.m_vPath);
+				return Out;
+			}
+		}
+
+		// --- 5. Emergency upper hemisphere radar (reference spec 5.9). -------------------------
+		// No air jump left to spend, so the only way out is a hook. The radar ignores where the
+		// player is looking and sweeps the ceiling, the two upper diagonals and both side walls;
+		// a player staring into the pool below still gets pulled out by the ceiling above.
+		{
+			CNetObj_PlayerInput WallHookInput = Ctx.m_Input;
+			if(TryEmergencyWallCeilingHook(m_pClient, pWorld, Ctx.m_Input, &WallHookInput, CheckTicks, Flags))
+			{
+				Out.m_Input = WallHookInput;
+				Out.m_Active = 1;
+				Out.m_SurvivalTicks = CheckTicks;
+				Out.m_AimTarget.m_Valid = true;
+				Out.m_AimTarget.m_Pos = Pos + AimDirection(WallHookInput.m_TargetX, WallHookInput.m_TargetY) * 128.0f;
+				str_copy(Out.m_aReason, "hook the ceiling above");
+				if(Set.m_DrawPath)
+					SimulateCandidate(m_pClient, pWorld, Out.m_Input, CheckTicks, Flags, &Out.m_vPath);
+				return Out;
+			}
+		}
+
+		// --- 6. Unfreeze escape (reference spec 7.4, 0x14032d890). ----------------------------
+		// Walk, and hook, towards the closest unfreeze tile inside the configured radius. The
+		// unfreeze hazard rule of the search below is deliberately waived here: when there is no
+		// other way out, an unfreeze tile is the refuge and not a hazard.
+		if(Set.m_BlatantUnfreeze)
+		{
+			vec2 UnfreezePos;
+			if(FindNearestUnfreezeTile(pWorld->Collision(), Pos, Set.m_BlatantUnfreezeTicks, &UnfreezePos))
+			{
+				SSimFlags EscapeFlags = Flags;
+				EscapeFlags.m_AvoidUnfreeze = false;
+				EscapeFlags.m_UnfreezeTicks = 0;
+				for(const bool Hook : {true, false})
+				{
+					const CNetObj_PlayerInput Escape = BuildApproachInput(Ctx.m_Input, Pos, UnfreezePos, Hook);
+					if(SimulateCandidate(m_pClient, pWorld, Escape, CheckTicks, EscapeFlags) == SIMULATION_SAFE_CONSTANT)
+					{
+						Out.m_Input = Escape;
+						Out.m_Active = 1;
+						Out.m_SurvivalTicks = CheckTicks;
+						Out.m_AimTarget.m_Valid = true;
+						Out.m_AimTarget.m_Pos = UnfreezePos;
+						str_copy(Out.m_aReason, "escape to an unfreeze tile");
+						if(Set.m_DrawPath)
+							SimulateCandidate(m_pClient, pWorld, Out.m_Input, CheckTicks, EscapeFlags, &Out.m_vPath);
+						return Out;
+					}
+				}
+			}
+		}
+
+		// --- 7. Greedy search over the full Cartesian action space (reference spec 7.2/7.5). ---
+		// The whole branch ring of one round is simulated concurrently (0x14032eb50) and then folded
+		// through the same survival and tie rules, in the reference candidate order. The ring is
+		// Dirs[3] x Hooks[2] x Jumps[2]: the jump axis only exists while the tee is off the ground
+		// with its air jump left, because that is the only state in which pressing the key does
+		// anything at all.
+		const bool CanAirJump = CanUseAirJump(pWorld, m_pClient->m_Snap.m_LocalClientId);
+		std::vector<CNetObj_PlayerInput> vActions;
+		BuildBlatantCandidates(Ctx.m_Input, Set.m_BlatantDirection, Set.m_BlatantHook, CanAirJump, &vActions);
+		const std::vector<int> vScores = SimulateBranchesParallel(m_pClient, pWorld, vActions, CheckTicks, Flags);
+		for(size_t i = 0; i < vActions.size() && i < vScores.size(); ++i)
+			Consider(vActions[i], vScores[i], false);
+
+		// --- 7b. Internal aim layer. ----------------------------------------------------------
+		// The whole aiming machinery hangs off the internal aimbot switch: it produces extra
+		// candidates, and the survival search above still decides whether one of them is used, so
+		// an aim change can never make the bot less safe than the plain candidates.
+		// This layer sweeps the field of view on its own even when the dispatcher already ran the
+		// stage 2 sector scan (reference spec 5.6): the two do different jobs. Stage 2 rewrites the
+		// crosshair the agent works from, while this sweep is what feeds auto aim (longest
+		// surviving ray) and aim assist (safe ray closest to the crosshair), so skipping it would
+		// leave bc_avoid_auto_aim and bc_avoid_aim_assist without any effect.
+		if(!FoundSafe && Set.m_Aimbot)
 		{
 			std::vector<vec2> vAims;
 
-			// The track point is a candidate either way; safe aim tracking only adds the rule that
-			// it must have been verified as safe first.
+			// The track point is a candidate; safe aim tracking adds the rule that it must have
+			// been verified safe over the whole window first.
 			if(Set.m_TrackPoint && m_TrackPointValid)
 			{
 				const vec2 Dir = m_TrackPointPos - Pos;
@@ -1007,23 +1598,19 @@ namespace Avoid
 						CNetObj_PlayerInput Test = Ctx.m_Input;
 						AimTargetsFrom(DirToTrack, &Test.m_TargetX, &Test.m_TargetY);
 						Test.m_Hook = 1;
-						// Both sides are measured over the same window, otherwise a tracked aim
-						// that dies late would pass a comparison against a much shorter baseline.
-						const int Res = SimulateCandidate(m_pClient, pWorld, Test, CheckTicks, Flags);
-						const int PlayerCheck = SimulateCandidate(m_pClient, pWorld, Ctx.m_Input, CheckTicks, Flags);
-						Usable = Res == SIMULATION_SAFE_CONSTANT || Res > PlayerCheck;
+						Usable = SimulateCandidate(m_pClient, pWorld, Test, CheckTicks, Flags) == SIMULATION_SAFE_CONSTANT;
 					}
 					if(Usable)
 						vAims.push_back(DirToTrack);
 				}
 			}
 
-			// Auto drag always aims at the closest tee; the survival search decides whether hooking
-			// it is actually a good idea.
-			if(Set.m_AutoDrag && Set.m_PlayerPrediction)
+			// Auto drag also offers its aim to the search; step 2 already returned when hooking the
+			// teammate was safe on its own. Same reach rule as the rescue itself.
+			if(Set.m_AutoDrag)
 			{
 				int BestTee = -1;
-				float BestDist = HookLength;
+				float BestDist = AUTO_DRAG_MAX_DIST;
 				for(int i = 0; i < MAX_CLIENTS; ++i)
 				{
 					if(i == m_pClient->m_Snap.m_LocalClientId)
@@ -1032,7 +1619,7 @@ namespace Avoid
 					if(!pOther)
 						continue;
 					const float Dist = distance(Pos, pOther->Core()->m_Pos);
-					if(Dist <= BestDist)
+					if(Dist <= BestDist && Dist >= AUTO_DRAG_MIN_DIST)
 					{
 						BestDist = Dist;
 						BestTee = i;
@@ -1042,14 +1629,11 @@ namespace Avoid
 					vAims.push_back(normalize(pWorld->GetCharacterById(BestTee)->Core()->m_Pos - Pos));
 			}
 
-			// Track point and auto drag carry their own aim, the field of view scan below adds two
-			// more picks. Everything ends up in the same candidate list.
 			const int FixedAims = (int)vAims.size();
 
-			// Field of view scan. The reference offers two ways to pick from it, and they really are
+			// Field of view scan. The reference offers two ways to pick from it, and they are
 			// different choices: auto aim takes the direction that survives longest, aim assist
-			// takes the *safe* direction closest to the player's own crosshair. With both switches
-			// on, both picks become candidates.
+			// takes the *safe* direction closest to the player's own crosshair.
 			const int Segments = std::max(1, Set.m_AimbotSegments);
 			const float FovRad = (float)Set.m_AimbotFov * (pi / 180.0f);
 			const float BaseAngle = std::atan2(PlayerAim.y, PlayerAim.x);
@@ -1106,8 +1690,6 @@ namespace Avoid
 				vSelected.push_back(Dir);
 			};
 
-			// The tracked aim point and the auto drag target are chosen by their own rule, so they
-			// are candidates whenever their switch put them on the list.
 			for(int i = 0; i < FixedAims; ++i)
 				AddAim(i);
 			if(Set.m_AutoAim)
@@ -1121,33 +1703,33 @@ namespace Avoid
 				{
 					CNetObj_PlayerInput Candidate = Action;
 					AimTargetsFrom(Aim, &Candidate.m_TargetX, &Candidate.m_TargetY);
-					const int Score = SimulateCandidate(m_pClient, pWorld, Candidate, CheckTicks, Flags);
-					const int Survival = Score == SIMULATION_SAFE_CONSTANT ? CheckTicks : Score;
-					if(Survival > BestSurvival)
-					{
-						BestSurvival = Survival;
-						BestAction = Candidate;
-						BestFromAimbot = true;
-					}
-					if(Score == SIMULATION_SAFE_CONSTANT)
-						FoundSafe = true;
+					Consider(Candidate, SimulateCandidate(m_pClient, pWorld, Candidate, CheckTicks, Flags), true);
+					if(FoundSafe)
+						break;
 				}
+				if(FoundSafe)
+					break;
 			}
 		}
 
-		// 4. NSIF (reference spec 6.4): nothing is fully safe, so spend the first step of the last
-		// known safe sequence. The reference *consumes* that step, which is what makes NSIF a
-		// one-shot hope rather than an endless replay of the same stale input.
+		// --- 8. NSIF (reference spec 7.6, 0x14032dd20 - 0x14032ddee). --------------------------
+		// Nothing survives the whole window, so the last known safe sequence is replayed: a
+		// sequence of more than one step is stepped through, and a single step is the last thing
+		// that worked, so it is held instead of being spent. That is what turns a doomed fall into
+		// the longest possible survival instead of a dropped input. Step 6 still decides whether
+		// the replayed step is worth taking: a stale input that buys fewer ticks than what the
+		// player is already doing must not replace it.
 		bool UsedFallback = false;
 		if(FoundSafe)
 		{
 			m_SavedSafeSequence.clear();
 			m_SavedSafeSequence.push_back(BestAction);
 		}
-		else if(Set.m_Nsif && !m_SavedSafeSequence.empty())
+		else if((Set.m_Nsif || Set.m_TrackPoint) && !m_SavedSafeSequence.empty())
 		{
 			BestAction = m_SavedSafeSequence.front();
-			m_SavedSafeSequence.erase(m_SavedSafeSequence.begin());
+			if(m_SavedSafeSequence.size() > 1)
+				m_SavedSafeSequence.erase(m_SavedSafeSequence.begin());
 			// The saved step was safe when it was stored, not necessarily now; reporting what it
 			// actually does keeps the HUD honest.
 			const int Score = SimulateCandidate(m_pClient, pWorld, BestAction, CheckTicks, Flags);
@@ -1155,10 +1737,19 @@ namespace Avoid
 			UsedFallback = true;
 		}
 
-		// Reference spec 6.4 step 4 only applies a plan when the search produced one, i.e. when
-		// some candidate survived at least one tick. If everything dies immediately the player
-		// keeps their own input, exactly like the reference leaves m_Sequence empty.
-		if(BestSurvival > 0 || UsedFallback)
+		// The reference greedy search keeps the first candidate of the ring that reaches the best
+		// survival count and breaks every tie in favour of the player's own hook and direction (see
+		// Consider above). It has no extra preservation pass on top: once the ten tick probe let the
+		// agent through, the player's input dies inside the check window, and a guard that cancels a
+		// rescue to protect an input that is about to freeze the tee is exactly the behaviour the
+		// reference does not have.
+
+		// --- 9. Best effort (reference spec 7.6, 0x14032de7f). ---------------------------------
+		// Take over as soon as something survives strictly longer than the player's own input: a
+		// fully safe candidate, the replayed NSIF step, or - when neither exists - the branch that
+		// bought the most ticks. Blatant is the aggressive tier; measuring a longer surviving action
+		// and then letting the tee walk into the freeze anyway is exactly what it is not for.
+		if(BestSurvival > KickSafety)
 		{
 			Out.m_Input = BestAction;
 			Out.m_Active = 1;
@@ -1184,15 +1775,15 @@ namespace Avoid
 		}
 		else
 		{
-			Out.m_SurvivalTicks = KickSafety == SIMULATION_SAFE_CONSTANT ? Set.m_KickInTicks : KickSafety;
-			str_copy(Out.m_aReason, "no safer plan");
+			Out.m_SurvivalTicks = KickSafety > 0 ? KickSafety : BestSurvival;
+			str_copy(Out.m_aReason, "player input safe");
 		}
 
 		return Out;
 	}
 
 	// -----------------------------------------------------------------------------------------
-	// 3. Legit agent (reference spec 7)
+	// 3. Legit agent (reference spec 8)
 	// -----------------------------------------------------------------------------------------
 
 	AvoidInput CLegitAgent::GetAction(const SContext &Ctx, CGameWorld *pWorld)
@@ -1216,12 +1807,14 @@ namespace Avoid
 		Flags.m_UnfreezeTicks = Set.m_LegitUnfreezeTicks;
 
 		const int CheckTicks = Set.m_LegitCheckTicks;
+
+		// Reference spec 8.3 has no safety gate of its own: the ten tick probe of the dispatcher
+		// (spec 5.5) already decided that the player's own input does not have enough margin, and
+		// the 26 tick arbitration below is what decides whether anything may replace it. A second,
+		// shorter baseline here would swallow exactly the last dangerous ticks the agent exists for.
+
 		const int Iterations = std::max(1, Set.m_LegitIterations);
 		const double ExplorationC = (double)Set.m_LegitExploration;
-		const double WeightDir = (double)Set.m_LegitDirectionWeight;
-		const double WeightHook = (double)Set.m_LegitHookWeight;
-		const double WeightLife = (double)Set.m_LegitLifespanWeight;
-		constexpr float WEIGHT_SCALE = 0.01f;
 
 		// Reference MCTS node (0x58 bytes in the binary).
 		struct MCTSNode
@@ -1241,19 +1834,25 @@ namespace Avoid
 			}
 		};
 
-		// Reference spec 7.2: asymmetric multi objective UCT heuristic.
 		auto Heuristic = [&](const CNetObj_PlayerInput &Action, int SurvivalTicks) {
-			const float DirDiff = std::abs((float)Action.m_Direction - (float)Ctx.m_Input.m_Direction);
-			const float DirScore = std::abs(DirDiff - 2.0f) * ((float)WeightDir * WEIGHT_SCALE);
-			const float HookDiff = std::abs((float)Action.m_Hook - (float)Ctx.m_Input.m_Hook);
-			const float HookScore = std::abs(HookDiff - 1.0f) * ((float)WeightHook * WEIGHT_SCALE);
-			const float LifeScore = (float)SurvivalTicks * ((float)WeightLife * WEIGHT_SCALE);
-			return (double)(DirScore + HookScore + LifeScore);
+			return (double)LegitHeuristicScore(Action, Ctx.m_Input, SurvivalTicks,
+				Set.m_LegitDirectionWeight, Set.m_LegitHookWeight, Set.m_LegitLifespanWeight);
 		};
 
 		MCTSNode *pRoot = new MCTSNode();
 		pRoot->m_Action = Ctx.m_Input;
 
+		// Reference spec 8.3: the air jump axis of the expansion only opens while the tee still
+		// owns its air jump, is in the air, and has the headroom an air jump needs. The world does
+		// not move while the search runs, so this is decided once for the whole tree.
+		CCharacter *pLocal = pWorld->GetCharacterById(m_pClient->m_Snap.m_LocalClientId);
+		const bool CanAirJump = pLocal != nullptr &&
+					CanUseAirJump(pWorld, m_pClient->m_Snap.m_LocalClientId) &&
+					CheckHeadroomClearance(pWorld->Collision(), pLocal->Core()->m_Pos, AIR_JUMP_HEADROOM);
+
+		// The reference runs its iteration count to the end and simply drops frames when the
+		// budget is set absurdly high. A shippable client must not stall, so the search yields and
+		// reports the best plan it has; with the reference defaults this never triggers.
 		const int64_t Deadline = time_get() + (int64_t)(LEGIT_DEADLINE_MS * (double)time_freq() / 1000.0);
 		bool DeadlineHit = false;
 
@@ -1265,7 +1864,7 @@ namespace Avoid
 				break;
 			}
 
-			// 1. Selection
+			// 1. Selection (UCT + heuristic).
 			MCTSNode *pCurr = pRoot;
 			while(!pCurr->m_vChildren.empty())
 			{
@@ -1282,7 +1881,9 @@ namespace Avoid
 					{
 						const double Exploitation = pChild->m_TotalValue / (double)pChild->m_Visits;
 						const double Exploration = ExplorationC * std::sqrt(std::log((double)std::max(1, pCurr->m_Visits)) / (double)pChild->m_Visits);
-						Score = Exploitation + Exploration + Heuristic(pChild->m_Action, pChild->m_LifespanTicks);
+						// Reference 0x14033838d: terminal child heuristic is zero
+						const double H = pChild->m_IsTerminal ? 0.0 : Heuristic(pChild->m_Action, pChild->m_LifespanTicks);
+						Score = Exploitation + Exploration + H;
 					}
 					if(Score > BestScore)
 					{
@@ -1295,78 +1896,142 @@ namespace Avoid
 				pCurr = pBestChild;
 			}
 
-			// 2. Expansion
+			// 2. Expansion (reference 0x140338650 -> 0x140338b60).
 			if(!pCurr->m_IsTerminal && pCurr->m_Visits > 0)
 			{
-				static const int s_aDirs[3] = {-1, 0, 1};
-				static const int s_aHooks[2] = {0, 1};
-				const int DirCount = Set.m_LegitDirection ? 3 : 1;
-				const int HookCount = Set.m_LegitHook ? 2 : 1;
-				for(int d = 0; d < DirCount; ++d)
+				std::vector<CNetObj_PlayerInput> vCandidates;
+				BuildLegitCandidates(pCurr->m_Action, Set.m_LegitDirection, Set.m_LegitHook, CanAirJump, &vCandidates);
+				for(const CNetObj_PlayerInput &CandAct : vCandidates)
 				{
-					for(int h = 0; h < HookCount; ++h)
-					{
-						MCTSNode *pNewChild = new MCTSNode();
-						pNewChild->m_pParent = pCurr;
-						pNewChild->m_Action = pCurr->m_Action;
-						if(Set.m_LegitDirection)
-							pNewChild->m_Action.m_Direction = s_aDirs[d];
-						if(Set.m_LegitHook)
-							pNewChild->m_Action.m_Hook = s_aHooks[h];
-						pCurr->m_vChildren.push_back(pNewChild);
-					}
+					MCTSNode *pNewChild = new MCTSNode();
+					pNewChild->m_pParent = pCurr;
+					pNewChild->m_Action = CandAct;
+					pCurr->m_vChildren.push_back(pNewChild);
 				}
+
+				// The reference picks one of the fresh children at random for the immediate rollout
+				// (0x14033920d: rand() % count).
 				if(!pCurr->m_vChildren.empty())
 					pCurr = pCurr->m_vChildren[(size_t)(rand() % (int)pCurr->m_vChildren.size())];
 			}
 
-			// 3. Rollout
+			// 3. Rollout.
 			const int Survival = SimulateCandidate(m_pClient, pWorld, pCurr->m_Action, CheckTicks, Flags);
 			pCurr->m_LifespanTicks = Survival == SIMULATION_SAFE_CONSTANT ? CheckTicks : Survival;
-			const double Reward = Survival == SIMULATION_SAFE_CONSTANT ? 1.0 : ((double)Survival / (double)CheckTicks);
-			if(Survival < CheckTicks)
+			// Reference 0x14033904b-0x140339075: Reward = (double)pCurr->m_LifespanTicks (matches heuristic scale)
+			const double Reward = (double)pCurr->m_LifespanTicks;
+			// Reference 0x140339054: only mark terminal if non-root and survival is zero or less.
+			// Root must never be terminal, otherwise iteration 1 skips expansion and the tree never grows.
+			if(pCurr != pRoot && Survival <= 0)
 				pCurr->m_IsTerminal = true;
 
-			// 4. Backpropagation
+			// 4. Backpropagation (Reference 0x140338ee0 & 0x140338220).
 			for(MCTSNode *pNode = pCurr; pNode; pNode = pNode->m_pParent)
 			{
 				pNode->m_Visits++;
-				pNode->m_TotalValue += Reward;
+				if(pNode->m_IsTerminal)
+					pNode->m_TotalValue = 0.0;
+				else
+					pNode->m_TotalValue += Reward;
 			}
 		}
 
-		// The most visited root child wins.
-		MCTSNode *pBest = nullptr;
-		int MostVisits = -1;
+		// Final decision (reference 0x1403392cb): exploitation + heuristic with the exploration
+		// term set to zero. This is what makes the agent human like: the child that matches the
+		// player's own direction and hook state carries the full heuristic bonus, so as long as the
+		// player's input is safe the search keeps choosing it and never touches the input.
+		std::vector<SLegitRootChild> vRoot;
+		vRoot.reserve(pRoot->m_vChildren.size());
 		for(MCTSNode *pChild : pRoot->m_vChildren)
+			vRoot.push_back({pChild->m_Action, pChild->m_Visits, pChild->m_TotalValue, pChild->m_LifespanTicks});
+
+		const int BestIndex = SelectLegitRootChild(vRoot, Ctx.m_Input,
+			Set.m_LegitDirectionWeight, Set.m_LegitHookWeight, Set.m_LegitLifespanWeight);
+
+		// 4.5 Preemptive hook release (reference spec 5.7, assembly 0x1403389ba: `call 0x1403286f0`).
+		// It runs before the arbitration and does not consult the tree at all: when the tee hangs
+		// from a hook that is about to swing it into the freeze, letting go at the tangent is the
+		// better plan by construction, and no search result may talk the agent out of it.
 		{
-			if(pChild->m_Visits > MostVisits)
+			CNetObj_PlayerInput SnatchInput = Ctx.m_Input;
+			if(CheckPreemptiveHookRelease(m_pClient, pWorld, Ctx.m_Input, &SnatchInput, CheckTicks, Flags))
 			{
-				MostVisits = pChild->m_Visits;
-				pBest = pChild;
+				Out.m_Input = SnatchInput;
+				Out.m_Active = 1;
+				Out.m_SurvivalTicks = CheckTicks;
+				str_copy(Out.m_aReason, "release the hook before the swing");
+				if(Set.m_DrawPath)
+					SimulateCandidate(m_pClient, pWorld, Out.m_Input, CheckTicks, Flags, &Out.m_vPath);
+				delete pRoot;
+				return Out;
 			}
 		}
 
-		// Reference spec 7.3: the plan is applied whenever it differs from what the player pressed.
-		if(pBest && (pBest->m_Action.m_Direction != Ctx.m_Input.m_Direction ||
-			      pBest->m_Action.m_Hook != Ctx.m_Input.m_Hook))
+		if(BestIndex >= 0)
 		{
-			Out.m_Input = pBest->m_Action;
-			Out.m_Active = 1;
-			Out.m_SurvivalTicks = pBest->m_LifespanTicks;
-			if(pBest->m_Action.m_Hook != Ctx.m_Input.m_Hook && pBest->m_Action.m_Direction != Ctx.m_Input.m_Direction)
-				str_copy(Out.m_aReason, "hook and steer to safety");
-			else if(pBest->m_Action.m_Hook != Ctx.m_Input.m_Hook)
-				str_copy(Out.m_aReason, pBest->m_Action.m_Hook ? "hook to safety" : "release hook");
-			else if(pBest->m_Action.m_Direction == 0)
-				str_copy(Out.m_aReason, "brake before hazard");
+			const SLegitRootChild &Best = vRoot[(size_t)BestIndex];
+
+			// The two masks of 0x140338ab4 / 0x140338ac6: a disabled assistance axis keeps whatever
+			// the player pressed, no matter what the search preferred.
+			CNetObj_PlayerInput Override = Ctx.m_Input;
+			if(Set.m_LegitDirection)
+				Override.m_Direction = Best.m_Action.m_Direction;
+			if(Set.m_LegitHook)
+				Override.m_Hook = Best.m_Action.m_Hook;
+
+			// 5. The 26 tick post hoc gain arbitration (assembly 0x140338a0c - 0x140338a68).
+			// The MCTS answer is worth nothing on its own: it is only allowed to replace the player's
+			// input when it survives at least one tick longer over a fixed horizon of 26 ticks. Both
+			// sides are measured with the same flags, and the fixed horizon does not follow the Legit
+			// check-ticks CVar.
+			const int CandidateSurvival = SimulateCandidate(m_pClient, pWorld, Best.m_Action,
+				LEGIT_ARBITRATION_TICKS, Flags);
+			const int HumanSurvival = SimulateCandidate(m_pClient, pWorld, Ctx.m_Input,
+				LEGIT_ARBITRATION_TICKS, Flags);
+			const int Gain = ArbitrationGain(CandidateSurvival, HumanSurvival, LEGIT_ARBITRATION_TICKS);
+
+			Out.m_SurvivalTicks = Best.m_LifespanTicks > 0 ? Best.m_LifespanTicks : CheckTicks;
+
+			if(!ArbitrationAllowsOverride(CandidateSurvival, HumanSurvival, LEGIT_ARBITRATION_TICKS))
+			{
+				// The candidate is not better than what the player is already doing: the search noise
+				// is rejected and the input stays exactly as it was.
+				str_copy(Out.m_aReason, "post hoc gain below 1 tick");
+			}
+			else if(Override.m_Direction == Ctx.m_Input.m_Direction &&
+				Override.m_Hook == Ctx.m_Input.m_Hook)
+			{
+				// The masks turned the winning child back into the player's own input. There is
+				// nothing to override, so no packet is forced either.
+				str_copy(Out.m_aReason, "player input safe");
+			}
 			else
-				str_copy(Out.m_aReason, "steer to safety");
-			if(Set.m_DrawPath)
-				SimulateCandidate(m_pClient, pWorld, Out.m_Input, CheckTicks, Flags, &Out.m_vPath);
+			{
+				const char *pBase = "steer to safety";
+				if(Override.m_Hook != Ctx.m_Input.m_Hook && Override.m_Direction != Ctx.m_Input.m_Direction)
+					pBase = "hook and steer to safety";
+				else if(Override.m_Hook != Ctx.m_Input.m_Hook)
+					pBase = Override.m_Hook ? "hook to safety" : "release hook";
+				else if(Override.m_Direction == 0)
+					pBase = "brake before hazard";
+
+				// The gain that bought the override is part of the reason: it is the number the
+				// arbitration is judged by.
+				char aReason[64];
+				str_format(aReason, sizeof(aReason), "%s (+%d)", pBase, Gain);
+
+				Out.m_Input = Override;
+				Out.m_Active = 1;
+				str_copy(Out.m_aReason, aReason);
+				if(Set.m_DrawPath)
+					SimulateCandidate(m_pClient, pWorld, Out.m_Input, CheckTicks, Flags, &Out.m_vPath);
+			}
 		}
 		else
 		{
+			// The deadline cut the search before a single root child was rolled out. Nothing was
+			// measured, so nothing is changed: acting on an unvisited child is exactly how the
+			// agent used to walk left on its own.
 			Out.m_SurvivalTicks = CheckTicks;
 			str_copy(Out.m_aReason, DeadlineHit ? "search budget reached" : "player input safe");
 		}
@@ -1376,7 +2041,7 @@ namespace Avoid
 	}
 
 	// -----------------------------------------------------------------------------------------
-	// 4. Fentbot agent (reference spec 8)
+	// 4. Fentbot agent (reference spec 9)
 	// -----------------------------------------------------------------------------------------
 
 	CFentbotAgent::~CFentbotAgent()
@@ -1546,13 +2211,16 @@ namespace Avoid
 		Flags.m_pNav = &m_Nav;
 
 		// --- 1. Navigable grid and flow field (budgeted, survives across ticks). -------------
+		const CTileEditor *pEditor = Ctx.m_pTileEditor;
+		const unsigned EditorRevision = pEditor ? pEditor->Revision() : 0;
 		const bool MapChanged = m_Nav.Width() != pCollision->GetWidth() || m_Nav.Height() != pCollision->GetHeight();
 		const bool LightChanged = m_Nav.LightTile() != Set.m_FentLightTile ||
 					  m_Nav.LightRadius() != Set.m_FentLightTileRadius;
-		if(MapChanged || LightChanged || (!m_Nav.Ready() && !m_Nav.Building()))
+		const bool EditorChanged = m_Nav.EditorRevision() != EditorRevision;
+		if(MapChanged || LightChanged || EditorChanged || (!m_Nav.Ready() && !m_Nav.Building()))
 		{
 			m_Session.Abort(); // the flow field the session points into is about to be replaced
-			m_Nav.Rebuild(pCollision, Set.m_FentLightTile, Set.m_FentLightTileRadius);
+			m_Nav.Rebuild(pCollision, Set.m_FentLightTile, Set.m_FentLightTileRadius, pEditor);
 			m_SnapshotValid = false;
 		}
 		if(!m_Nav.Ready())
@@ -1942,11 +2610,15 @@ namespace Avoid
 
 		// --- 1. Navigable grid. ---------------------------------------------------------------
 		// Pilot has no light-tile switch of its own, so its grid never treats freeze as crossable.
+		// The goal set and the tunnel restriction come from the tile editor, exactly like Fentbot.
+		const CTileEditor *pEditor = Ctx.m_pTileEditor;
+		const unsigned EditorRevision = pEditor ? pEditor->Revision() : 0;
 		const bool MapChanged = m_Nav.Width() != pCollision->GetWidth() || m_Nav.Height() != pCollision->GetHeight();
-		if(MapChanged || m_Nav.LightTile() || (!m_Nav.Ready() && !m_Nav.Building()))
+		const bool EditorChanged = m_Nav.EditorRevision() != EditorRevision;
+		if(MapChanged || EditorChanged || m_Nav.LightTile() || (!m_Nav.Ready() && !m_Nav.Building()))
 		{
 			m_Session.Abort();
-			m_Nav.Rebuild(pCollision, false, 0);
+			m_Nav.Rebuild(pCollision, false, 0, pEditor);
 			m_SnapshotValid = false;
 		}
 		if(!m_Nav.Ready())

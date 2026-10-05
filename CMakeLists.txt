@@ -3038,8 +3038,11 @@ if(CLIENT)
     components/bestclient/menus_tas.cpp
     components/bestclient/avoid.cpp
     components/bestclient/avoid.h
+    components/bestclient/avoid_decision.h
     components/bestclient/avoid_engine.cpp
     components/bestclient/avoid_engine.h
+    components/bestclient/avoid_tile_editor.cpp
+    components/bestclient/avoid_tile_editor.h
     components/bestclient/menus_avoid.cpp
     components/bestclient/finish_prediction.cpp
     components/bestclient/finish_prediction.h
@@ -3999,6 +4002,7 @@ if((GTEST_FOUND OR DOWNLOAD_GTEST) AND SERVER)
   set_src(TESTS GLOB src/test
     # tidy-alphabetical-start
     aio_test.cpp
+    avoid_decision_test.cpp
     bezier_test.cpp
     blocklist_driver_test.cpp
     bytes_be_test.cpp

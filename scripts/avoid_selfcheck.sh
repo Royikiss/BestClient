@@ -34,6 +34,12 @@ CONTRACT = [
     ("bc_avoid_draw_path", 1, 0, 1),
     ("bc_avoid_draw_track_point", 0, 0, 1),
     ("bc_avoid_draw_aimbot", 0, 0, 1),
+    ("bc_avoid_tile_editor_enable", 0, 0, 1),
+    ("bc_avoid_tile_editor_type", 0, 0, 1),
+    ("bc_avoid_tile_editor_clear", 0, 0, 1),
+    ("bc_avoid_tile_editor_auto_tunnel", 0, 0, 1),
+    ("bc_avoid_tile_editor_auto_tunnel_width", 2, 0, 10),
+    ("bc_avoid_tile_editor_auto_finish", 0, 0, 1),
     ("bc_avoid_legit_direction_weight", 170, 1, 1000),
     ("bc_avoid_legit_lifespan_weight", 160, 1, 1000),
     ("bc_avoid_legit_hook_weight", 260, 1, 1000),
@@ -259,29 +265,145 @@ python3 - <<'EOF'
 engine = open("src/game/client/components/bestclient/avoid_engine.cpp", encoding="utf-8").read()
 header = open("src/game/client/components/bestclient/avoid_engine.h", encoding="utf-8").read()
 component = open("src/game/client/components/bestclient/avoid.cpp", encoding="utf-8").read()
+component_header = open("src/game/client/components/bestclient/avoid.h", encoding="utf-8").read()
+decision = open("src/game/client/components/bestclient/avoid_decision.h", encoding="utf-8").read()
+editor = open("src/game/client/components/bestclient/avoid_tile_editor.cpp", encoding="utf-8").read()
+editor_header = open("src/game/client/components/bestclient/avoid_tile_editor.h", encoding="utf-8").read()
 
 # Simulator (reference spec 4.1)
 assert "int SimulateCandidate(" in engine and "CopyWorldClean(" in engine
 assert "SIMULATION_SAFE_CONSTANT = 9999" in header
+# The death layer is a tile index, not a bit mask: `Tile & TILE_DEATH` also matches tile 3
+# (nohook), 11 (unfreeze), 34 (finish) and would report death on a finish tile.
+assert "== TILE_DEATH" in engine, "the death tile is no longer compared, it is masked"
+assert "& TILE_DEATH" not in engine, "TILE_DEATH is a tile index, masking it invents hazards"
+# The freeze hazard is the three flags of the tee, like the reference; the engine's own
+# m_IsInFreeze bookkeeping is broader (it is also set for death tiles and deep frozen tees).
+assert "pChar->m_FreezeTime > 0 || pChar->m_FrozenLastTick || pCore->m_DeepFrozen" in engine
+assert "m_Core.m_IsInFreeze || pCore->m_DeepFrozen" not in engine
 # Basic (reference spec 5): fixed 6 ticks, {0, -1, 1}, first safe candidate wins.
 assert "BASIC_CHECK_TICKS = 6" in header
 assert "s_aCandidateDirs[3] = {0, -1, 1}" in engine
 # Legit (reference spec 7): the asymmetric heuristic and the UCT term.
-assert "constexpr float WEIGHT_SCALE = 0.01f;" in engine
-assert "std::abs(DirDiff - 2.0f)" in engine and "std::abs(HookDiff - 1.0f)" in engine
+assert "constexpr float WEIGHT_SCALE = 0.01f;" in decision
+assert "std::abs(DirDiff - 2.0f)" in decision and "std::abs(HookDiff - 1.0f)" in decision
 assert "3.402823466e+38" in engine
-assert "s_aDirs[3] = {-1, 0, 1}" in engine
-# Blatant (reference spec 6): kick-in hysteresis, NSIF, direction x hook candidates.
+assert "s_aDirs[3] = {-1, 0, 1}" in decision
+# Legit final decision (reference spec 7.3, 0x1403392cb): exploitation + heuristic with a zero
+# exploration term, and never the most visited child. That rule is what stops the agent from
+# walking off on its own while the player's input is safe.
+assert "SelectLegitRootChild(" in engine, "the Legit root selection left the reference rule"
+assert "MostVisits" not in engine and "m_Visits > MostVisits" not in engine, \
+    "the Legit agent is back to picking the most visited child, which walks left when visits tie"
+assert "Exploitation + Heuristic" in decision
+assert "if(Child.m_Visits == 0)" in decision, "unvisited root children must be skipped"
+
+# ---------------------------------------------------------------------------------------------
+# v5.0 pre-activation pipeline (reference spec 5) and the two arbitration layers (spec 7.3, 8.3).
+# These are the mechanisms the 70 points of "human feel at full frame rate" hang on: without them
+# the client wakes a 100 round MCTS on every safe frame and the Legit agent overrides the player
+# for nothing.
+# ---------------------------------------------------------------------------------------------
+# 10 tick probe: fixed window, `cmp eax, 0x7` threshold, and the sentinel that skips the agents.
+assert "PROBE_CHECK_TICKS = 10" in decision, "the probe window left the reference constant"
+assert "PROBE_SAFE_TICKS = 7" in decision, "the probe threshold left `cmp eax, 0x7`"
+assert "ProbeIsSafe(" in decision and "SECTOR_SCAN_TICKS = 21" in decision
+assert "LEGIT_ARBITRATION_TICKS = 26" in decision, "the arbitration horizon left `mov edi, 0x1a`"
+assert "AUTO_DRAG_MAX_DIST = 380.0f" in decision and "AUTO_DRAG_MIN_DIST = 16.0f" in decision
+assert "IsBlacklistedGametype(" in decision, "the gamemode blacklist logic is gone"
+
+# The engine owns both pipeline entry points and the dispatcher has to call them in reference order.
+assert "int RunLightweightProbe(" in header and "int RunLightweightProbe(" in engine
+assert "bool RunSectorScan(" in header and "bool RunSectorScan(" in engine
+assert "ProbeIsSafe(Survival) ? SIMULATION_SAFE_CONSTANT : Survival" in engine, \
+    "the probe no longer turns >= 7 survived ticks into the fully safe sentinel"
+assert "RunLightweightProbe(pWorld, pInput, Ctx.m_Settings)" in component, "the dispatcher does not probe"
+assert "Avoid::RunSectorScan(GameClient(), pWorld" in component, "stage 2 is not wired"
+# The probe deliberately gates only the three avoid agents: Fentbot and Pilot are sliced planners
+# whose search only advances while they are called, so probing them would leave them without a plan.
+assert "AgentId != AGENT_FENTBOT && AgentId != AGENT_PILOT" in component, \
+    "the probe gate no longer excludes the two planners"
+# Order: gates -> probe -> sector scan -> agent.
+probe_at = component.index("RunLightweightProbe(pWorld, pInput, Ctx.m_Settings)")
+scan_at = component.index("Avoid::RunSectorScan(GameClient(), pWorld")
+agent_at = component.index("pAgent->GetAction(AgentCtx, pWorld)")
+assert probe_at < scan_at < agent_at, "the pipeline stages are out of reference order"
+
+# The five gates, in reference order, and the dispatcher asking for them before anything else.
+for gate in ("PRE_GAMEMODE", "PRE_INACTIVE", "PRE_FROZEN", "PRE_AFK"):
+    assert gate in component_header, gate + " left the pre-activation enum"
+assert "EPreActivation PreActivation() const;" in component_header
+assert "IsGamemodeBlacklisted()" in component and "IsPlayerInactive()" in component and \
+       "IsCharacterFrozen()" in component and "IsAfk()" in component and "UpdateAfkTimer(" in component
+assert component.index("if(IsGamemodeBlacklisted())") < component.index("if(IsPlayerInactive())") < \
+       component.index("if(IsCharacterFrozen())") < component.index("if(IsAfk())"), \
+    "the environment gates are no longer in reference order"
+assert "m_FreezeTime > 0 || pChar->m_FrozenLastTick" in component, "gate 3 lost the freeze flags"
+assert "GAMESTATEFLAG_PAUSED" in component and "TEAM_SPECTATORS" in component, "gate 2 lost a case"
+# AFK is a per-tick gate now, not a persisted switch-off: the reference blocks the tick and the bot
+# resumes by itself as soon as the player touches the controls again.
+assert "SetEnabled(false)" not in component, "AFK protection switches the bot off again"
+assert "m_LastActiveTime" in component and "m_LastPlayerInput" in component
+
+# Legit post hoc arbitration (spec 8.3, 0x140338a0c - 0x140338a68): both paths over a fixed 26
+# ticks, and the override only when the candidate survives at least one tick longer.
+assert "ArbitrationGain(CandidateSurvival, HumanSurvival, LEGIT_ARBITRATION_TICKS)" in engine, \
+    "the 26 tick gain arbitration is gone"
+assert "ArbitrationAllowsOverride(CandidateSurvival, HumanSurvival, LEGIT_ARBITRATION_TICKS)" in engine
+assert "post hoc gain below 1 tick" in engine, "the rejection path of the arbitration is gone"
+assert "CandidateSurvival" in engine and "HumanSurvival" in engine
+# The older, hook-only arbitration and the extra preservation guards must not come back: they let
+# the agent keep an input that the 26 tick arbitration had already rejected.
+assert "PlayerSurv" not in engine and "BestSurvHook0" not in engine, \
+    "the Legit hook guard / Blatant preservation guards are back"
+
+# Blatant cascade (spec 7.6): kick-in hysteresis, auto drag, unfreeze escape, concurrent greedy
+# search, NSIF, best effort - in exactly that order.
 assert "Set.m_KickInTicks" in engine and "m_SavedSafeSequence" in engine
-assert "s_aHooks[2] = {0, 1}" in engine
+assert "s_aHooks[2] = {0, 1}" in decision
+assert "Set.m_AutoDrag" in engine and "auto drag a teammate" in engine, "auto drag (spec 7.3) is gone"
+assert "FindNearestUnfreezeTile" in engine and "escape to an unfreeze tile" in engine, \
+    "the unfreeze escape (spec 7.4) is gone"
+assert "Set.m_Aimbot" in engine and "BestSurvivalAim" in engine and "BestNearAim" in engine
+kick_at = engine.index("const int KickScore = SimulateCandidate")
+drag_at = engine.index("// --- 2. Auto drag")
+unfreeze_at = engine.index("// --- 3. Unfreeze escape")
+greedy_at = engine.index("// --- 4. Greedy search")
+nsif_at = engine.index("// --- 5. NSIF")
+assert kick_at < drag_at < unfreeze_at < greedy_at < nsif_at, "the Blatant cascade lost its order"
+# The candidate ring of one greedy round is simulated concurrently (0x14032eb50).
+assert "SimulateBranchesParallel(" in engine and "std::async(std::launch::async" in engine, \
+    "the greedy search is no longer concurrent"
+assert "BuildBlatantCandidates(Ctx.m_Input" in engine
+# NSIF keeps a single step instead of spending it, so a doomed fall still gets the best input.
+assert "(Set.m_Nsif || Set.m_TrackPoint) && !m_SavedSafeSequence.empty()" in engine, \
+    "NSIF no longer honours the track point switch"
 # Fentbot (reference spec 8): the velocity/flow dot product weight and the preset table.
 assert "FENT_FLOW_WEIGHT = 1750.0f" in engine
 assert "Set.m_FentActions = 88;" in engine
 assert "Set.m_FentActions = 160;" in engine
 assert "Set.m_FentActions = 1000;" in engine
 assert "Set.m_FentDosage = 300;" in engine
-# Pilot (reference spec 9)
+# Pilot (reference spec 10)
 assert "m_PilotPopulation" in engine and "m_PilotTopK" in engine and "m_PilotSequence" in engine
+
+# Tile editor (reference spec 9): both planners read the same instance, and the grid it defines is
+# what the flow field is built from.
+assert "class CTileEditor" in editor_header and "Marker(" not in editor_header
+assert "void CNavigator::Rebuild(CCollision *pCollision, bool LightTile, int LightRadius, const CTileEditor *pEditor)" in engine
+assert "m_pEditor->IsTunnel(X, Y)" in engine and "m_pEditor->IsFinish(X, Y)" in engine, \
+    "the navigator ignores the tile editor"
+assert "EditorRevision()" in engine and "m_Nav.EditorRevision() != EditorRevision" in engine, \
+    "an edit no longer invalidates the flow field"
+assert "Avoid::CTileEditor m_TileEditor" in open("src/game/client/components/bestclient/avoid.h", encoding="utf-8").read()
+assert "Ctx.m_pTileEditor = &m_TileEditor;" in component, "the editor is not handed to the agents"
+assert "m_TileEditor.AutoFinish(" in component and "m_TileEditor.AutoTunnels(" in component
+assert "m_TileEditor.Interact(" in component, "the in world tile editor is gone"
+for action in ("bc_avoid_tile_editor_clear", "bc_avoid_tile_editor_auto_finish", "bc_avoid_tile_editor_auto_tunnel"):
+    member = "m_" + "".join(part.capitalize() for part in action.split("_"))
+    assert member in component, action + " is declared but never consumed"
+assert "IsTunnel" in editor_header and "IsFinish" in editor_header
+assert "AutoTunnels" in editor and "AutoFinish" in editor and "Interact" in editor and "ClearAll" in editor
 
 # All five agents exist and are reachable through the dispatcher.
 for agent in ("CBasicAgent", "CLegitAgent", "CBlatantAgent", "CFentbotAgent", "CPilotAgent"):

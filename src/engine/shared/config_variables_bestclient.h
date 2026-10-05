@@ -615,13 +615,20 @@ MACRO_CONFIG_INT(BcTasRewindTicks, bc_tas_rewind_ticks, 30, 5, 200, CFGFLAG_CLIE
 // Global
 MACRO_CONFIG_INT(BcAvoidEnabled, bc_avoid_enabled, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid: master switch, runs the selected Gores bot (bind a key to 'toggle bc_avoid_enabled 1 0')")
 MACRO_CONFIG_INT(BcAvoidAgent, bc_avoid_agent, 0, 0, 4, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid: Gores bot (0=Basic, 1=Legit, 2=Blatant, 3=Fentbot, 4=Pilot)")
-MACRO_CONFIG_INT(BcAvoidAfkProtection, bc_avoid_afk_protection, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid: turn the bot off after the configured idle time")
-MACRO_CONFIG_INT(BcAvoidAfkTime, bc_avoid_afk_time, 5, 5, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid: idle seconds before AFK protection disables the bot")
+MACRO_CONFIG_INT(BcAvoidAfkProtection, bc_avoid_afk_protection, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid: pause the bot while the player has not touched the controls for this many seconds")
+MACRO_CONFIG_INT(BcAvoidAfkTime, bc_avoid_afk_time, 5, 5, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid: idle seconds before AFK protection stops steering")
 MACRO_CONFIG_INT(BcAvoidPlayerPrediction, bc_avoid_player_prediction, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid: take other players into account while predicting")
 // Visuals
 MACRO_CONFIG_INT(BcAvoidDrawPath, bc_avoid_draw_path, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid: render the predicted path of the bot")
 MACRO_CONFIG_INT(BcAvoidDrawTrackPoint, bc_avoid_draw_track_point, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid: render the Blatant tracked aim point")
 MACRO_CONFIG_INT(BcAvoidDrawAimbot, bc_avoid_draw_aimbot, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid: render the Blatant internal aim target")
+// Tile editor: the goal set and the movement restriction of Fentbot and Pilot.
+MACRO_CONFIG_INT(BcAvoidTileEditorEnable, bc_avoid_tile_editor_enable, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tile editor: left click adds tiles, right click removes them while this is on")
+MACRO_CONFIG_INT(BcAvoidTileEditorType, bc_avoid_tile_editor_type, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tile editor: tile the left mouse button places (0=Tunnel, 1=Finish)")
+MACRO_CONFIG_INT(BcAvoidTileEditorClear, bc_avoid_tile_editor_clear, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tile editor: clear every edited tile (resets itself to 0)")
+MACRO_CONFIG_INT(BcAvoidTileEditorAutoTunnel, bc_avoid_tile_editor_auto_tunnel, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tile editor: build a tunnel around the loaded TAS replay (resets itself to 0)")
+MACRO_CONFIG_INT(BcAvoidTileEditorAutoTunnelWidth, bc_avoid_tile_editor_auto_tunnel_width, 2, 0, 10, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tile editor: tunnel radius in tiles around the replay path")
+MACRO_CONFIG_INT(BcAvoidTileEditorAutoFinish, bc_avoid_tile_editor_auto_finish, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tile editor: mark every finish tile of the map (resets itself to 0)")
 // Legit
 MACRO_CONFIG_INT(BcAvoidLegitDirectionWeight, bc_avoid_legit_direction_weight, 170, 1, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Legit priority: keep the direction the player intended to walk in")
 MACRO_CONFIG_INT(BcAvoidLegitLifespanWeight, bc_avoid_legit_lifespan_weight, 160, 1, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Legit priority: value surviving longer over matching the player input")

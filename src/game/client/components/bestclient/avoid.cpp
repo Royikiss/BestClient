@@ -12,6 +12,7 @@
 #include <engine/textrender.h>
 
 #include <game/client/components/bestclient/fast_practice.h>
+#include <game/client/components/bestclient/tas.h>
 #include <game/client/components/hud_layout.h>
 #include <game/client/gameclient.h>
 #include <game/client/prediction/entities/character.h>
@@ -92,9 +93,13 @@ void CAvoid::OnReset()
 	m_Telemetry = STelemetry{};
 	m_vLastPath.clear();
 	m_LastDecisionTick = -1;
-	m_IdleTicks = 0;
 	m_DroveTick = -1;
 	m_YieldTick = -1;
+	m_YieldPending = false;
+	m_LastGate = PRE_OK;
+	m_LastActiveTime = time_get();
+	m_LastPlayerInput = CNetObj_PlayerInput{};
+	m_TileEditor.ClearAll();
 	for(Avoid::BLAgent *pAgent : m_apAgents)
 	{
 		if(pAgent)
@@ -107,9 +112,14 @@ void CAvoid::OnMapLoad()
 	m_Telemetry = STelemetry{};
 	m_vLastPath.clear();
 	m_LastDecisionTick = -1;
-	m_IdleTicks = 0;
 	m_DroveTick = -1;
 	m_YieldTick = -1;
+	m_YieldPending = false;
+	m_LastGate = PRE_OK;
+	m_LastActiveTime = time_get();
+	m_LastPlayerInput = CNetObj_PlayerInput{};
+	// Edited tiles are map coordinates, so they cannot survive a map change.
+	m_TileEditor.ClearAll();
 	for(Avoid::BLAgent *pAgent : m_apAgents)
 	{
 		if(pAgent)
@@ -146,6 +156,7 @@ void CAvoid::SetAgent(int Agent)
 	m_vLastPath.clear();
 	m_LastDecisionTick = -1;
 	m_LastOverrideActive = false;
+	m_LastAimTargetValid = false;
 	// Both sides are reset: the new agent must not inherit anything, and the old one releases the
 	// navigable grid it built, which is the largest allocation of the whole module.
 	for(const int Index : {Previous, this->Agent()})
@@ -163,13 +174,21 @@ bool CAvoid::IsEnabled() const
 void CAvoid::SetEnabled(bool Enabled)
 {
 	g_Config.m_BcAvoidEnabled = Enabled ? 1 : 0;
-	m_IdleTicks = 0;
 	m_LastDecisionTick = -1;
 	m_vLastPath.clear();
 	m_LastOverrideActive = false;
-	// m_DroveTick / m_YieldTick are deliberately kept: if the agent was driving, the next tick has
-	// to hand the player's own input back with a packet, and the consecutive-tick test in
-	// FinishInput() makes a stale value harmless otherwise.
+	m_LastAimTargetValid = false;
+	// Switching the bot on after it sat out an idle stretch must not trip AFK protection on the
+	// very first tick: the clock starts again with an empty "last input", so the next sampled
+	// input counts as a change and starts the idle measurement over.
+	if(Enabled)
+	{
+		m_LastActiveTime = time_get();
+		m_LastPlayerInput = CNetObj_PlayerInput{};
+	}
+	// The driving -> yielded latch is deliberately kept across a toggle: if the agent was driving
+	// when it was switched off, the next tick still has to hand the player's own input back with a
+	// packet, and the pending flag in FinishInput() is what makes that happen.
 	m_Telemetry.m_State = Enabled ? STATE_WATCHING : STATE_OFF;
 }
 
@@ -209,6 +228,22 @@ const char *CAvoid::StateName(int State)
 	case STATE_NSIF: return BcLocalize("NSIF");
 	case STATE_AFK: return BcLocalize("AFK");
 	default: return BcLocalize("OFF");
+	}
+}
+
+const char *CAvoid::PreActivationName(EPreActivation Gate)
+{
+	// These end up in the HUD "Plan:" row and in the console status, so they stay short and follow
+	// the gate order of reference spec 5.
+	switch(Gate)
+	{
+	case PRE_OK: return "ready";
+	case PRE_GAMEMODE: return "gamemode blacklisted";
+	case PRE_INACTIVE: return "player not active";
+	case PRE_FROZEN: return "character frozen";
+	case PRE_AFK: return "AFK protection";
+	case PRE_SAFE: return "probe: player input safe";
+	default: return "ready";
 	}
 }
 
@@ -303,25 +338,123 @@ const CCharacterCore *CAvoid::ActiveCore(int *pClientId) const
 	return &GameClient()->m_aClients[ClientId].m_Predicted;
 }
 
-void CAvoid::CheckAfkProtection(const SSettings &Set, const Avoid::SContext &Ctx)
+CCharacter *CAvoid::ActiveCharacter(int *pClientId) const
 {
-	const bool ActiveInput = Ctx.m_Input.m_Direction != 0 || Ctx.m_Input.m_Jump != 0 ||
-				 Ctx.m_Input.m_Hook != 0 || (Ctx.m_Input.m_Fire & 1) != 0;
-	if(ActiveInput)
-		m_IdleTicks = 0;
-	else if(m_IdleTicks < 50 * 600)
-		m_IdleTicks++;
+	int LocalId = -1;
+	if(!ActiveCore(&LocalId))
+		return nullptr;
+	CGameWorld *pWorld = Avoid::GetActiveWorld(GameClient());
+	if(!pWorld)
+		return nullptr;
+	if(pClientId)
+		*pClientId = LocalId;
+	return pWorld->GetCharacterById(LocalId);
+}
 
-	if(!Set.m_AfkProtection || !IsEnabled())
-		return;
+// ---------------------------------------------------------------------------------------------
+// Pre-activation pipeline (reference spec 5)
+// ---------------------------------------------------------------------------------------------
 
-	if(m_IdleTicks >= 50 * Set.m_AfkTime)
+bool CAvoid::IsGamemodeBlacklisted() const
+{
+	// Reference spec 5.1. The reference reads the string out of its game info snapshot; the DDNet
+	// equivalent of that field is CGameClient::m_GameInfo.m_aGameType, which is the game type the
+	// connected server announced.
+	return Avoid::IsBlacklistedGametype(GameClient()->m_GameInfo.m_aGameType);
+}
+
+bool CAvoid::IsPlayerInactive() const
+{
+	// Reference spec 5.2: no valid local player, spectator, paused game or no live tee.
+	int LocalClientId = -1;
+	if(!ActiveCore(&LocalClientId))
+		return true;
+
+	// A Fast Practice sandbox runs on its own world with its own local tee, so the connection's
+	// snapshot says nothing about whether that tee may act.
+	if(!GameClient()->m_FastPractice.Active())
 	{
-		SetEnabled(false);
-		m_Telemetry.m_State = STATE_AFK;
-		str_copy(m_Telemetry.m_aReason, "AFK protection disabled the bot");
-		GameClient()->Echo(BcLocalize("Avoid: AFK protection disabled the bot"));
+		if(LocalClientId < 0 || LocalClientId >= MAX_CLIENTS)
+			return true;
+		if(GameClient()->m_Snap.m_SpecInfo.m_Active)
+			return true;
+		const CNetObj_PlayerInfo *pInfo = GameClient()->m_Snap.m_apPlayerInfos[LocalClientId];
+		if(!pInfo || pInfo->m_Team == TEAM_SPECTATORS)
+			return true;
+		// Dead and waiting to respawn: there is no character to steer, and the reference blocks
+		// this in the same gate.
+		if(!GameClient()->m_Snap.m_aCharacters[LocalClientId].m_Active)
+			return true;
 	}
+
+	const CNetObj_GameInfo *pGameInfo = GameClient()->m_Snap.m_pGameInfoObj;
+	if(pGameInfo && (pGameInfo->m_GameStateFlags & GAMESTATEFLAG_PAUSED))
+		return true;
+
+	return false;
+}
+
+bool CAvoid::IsCharacterFrozen() const
+{
+	// Reference spec 5.3: a frozen tee cannot steer, so every tick of prediction spent on it is
+	// wasted. The three flags are the ones the physics itself uses.
+	CCharacter *pChar = ActiveCharacter(nullptr);
+	if(!pChar)
+		return true;
+	return pChar->m_FreezeTime > 0 || pChar->m_FrozenLastTick || pChar->Core()->m_DeepFrozen;
+}
+
+void CAvoid::UpdateAfkTimer(const CNetObj_PlayerInput *pInput)
+{
+	// Reference spec 5.4: any change of the sampled hardware input counts as activity. The aim is
+	// compared with a small tolerance so that a mouse that is left alone but reports a pixel of
+	// jitter does not keep the bot awake forever.
+	if(pInput->m_Direction != m_LastPlayerInput.m_Direction ||
+		pInput->m_Jump != m_LastPlayerInput.m_Jump ||
+		pInput->m_Fire != m_LastPlayerInput.m_Fire ||
+		pInput->m_Hook != m_LastPlayerInput.m_Hook ||
+		std::abs(pInput->m_TargetX - m_LastPlayerInput.m_TargetX) > 2 ||
+		std::abs(pInput->m_TargetY - m_LastPlayerInput.m_TargetY) > 2)
+	{
+		m_LastActiveTime = time_get();
+		m_LastPlayerInput = *pInput;
+	}
+}
+
+bool CAvoid::IsAfk() const
+{
+	if(!g_Config.m_BcAvoidAfkProtection)
+		return false;
+
+	const int64_t Freq = time_freq();
+	if(Freq <= 0)
+		return false;
+
+	return (time_get() - m_LastActiveTime) / Freq >= (int64_t)g_Config.m_BcAvoidAfkTime;
+}
+
+CAvoid::EPreActivation CAvoid::PreActivation() const
+{
+	// The order is the reference order (spec 5): it is also cheapest first, so a player who is
+	// spectating or frozen never pays for anything below.
+	if(IsGamemodeBlacklisted())
+		return PRE_GAMEMODE;
+	if(IsPlayerInactive())
+		return PRE_INACTIVE;
+	if(IsCharacterFrozen())
+		return PRE_FROZEN;
+	if(IsAfk())
+		return PRE_AFK;
+	return PRE_OK;
+}
+
+int CAvoid::RunLightweightProbe(CGameWorld *pWorld, const CNetObj_PlayerInput *pInput, const SSettings &Set) const
+{
+	// Reference spec 5.5, assembly 0x140312258 - 0x140312270. Simulating the player's own input for
+	// ten ticks costs a fraction of one MCTS round, and it answers the only question that matters
+	// when nothing is wrong: is the player about to be frozen within six ticks? If not, no agent is
+	// woken at all, which is what keeps a safe player at full frame rate and zero twitching.
+	return Avoid::RunLightweightProbe(GameClient(), pWorld, *pInput, Set);
 }
 
 CAvoid::EInputResult CAvoid::FinishInput(bool Drives, CNetObj_PlayerInput *pInput, int Tick)
@@ -329,19 +462,38 @@ CAvoid::EInputResult CAvoid::FinishInput(bool Drives, CNetObj_PlayerInput *pInpu
 	if(Drives)
 	{
 		m_DroveTick = Tick;
-		m_YieldTick = -1;
+		m_YieldPending = true;
+		if(!m_LastAimTargetValid)
+		{
+			m_LastOverride.m_TargetX = pInput->m_TargetX;
+			m_LastOverride.m_TargetY = pInput->m_TargetY;
+		}
+		m_LastOverride.m_Jump = pInput->m_Jump;
+		m_LastOverride.m_Fire = pInput->m_Fire;
+		m_LastOverride.m_PlayerFlags = pInput->m_PlayerFlags;
+		m_LastOverride.m_WantedWeapon = pInput->m_WantedWeapon;
+		m_LastOverride.m_NextWeapon = pInput->m_NextWeapon;
+		m_LastOverride.m_PrevWeapon = pInput->m_PrevWeapon;
 		*pInput = m_LastOverride;
 		return INPUT_DRIVEN;
 	}
 
-	// The tick right after the agent stopped driving still has to put the player's own input on
-	// the wire, because the sampler compared its raw state against its own raw state and therefore
-	// has no idea that anything changed. Remembering the tick keeps that true for a re-send of the
-	// same tick.
-	if(m_DroveTick >= 0 && Tick == m_DroveTick + 1)
-		m_YieldTick = Tick;
+	// Handing the input back is not optional: the packet the agent forced on the driving tick
+	// carried the agent's own input, and the sampler only asks for another one when the *sampled*
+	// key state changes - it compares its own buffer against its own buffer and never notices the
+	// rewrite. The handover is therefore latched until it has really been sent once. Testing
+	// "this is the tick right after the intervention" instead missed the handover whenever the
+	// predicted tick did not advance by exactly one between two calls (prediction time reset, a
+	// lag spike, queued fast inputs), and the server then kept applying the agent's last input:
+	// the tee walked on by itself.
 	m_DroveTick = -1;
-	return m_YieldTick == Tick ? INPUT_YIELDED : INPUT_IDLE;
+	if(m_YieldPending)
+	{
+		m_YieldPending = false;
+		m_YieldTick = Tick;
+		return INPUT_YIELDED;
+	}
+	return INPUT_IDLE;
 }
 
 CAvoid::EInputResult CAvoid::ApplyInput(CNetObj_PlayerInput *pInput)
@@ -353,39 +505,20 @@ CAvoid::EInputResult CAvoid::ApplyInput(CNetObj_PlayerInput *pInput)
 	Ctx.m_Tick = Client()->PredGameTick(g_Config.m_ClDummy);
 	Ctx.m_Settings = ReadSettings();
 	Ctx.m_Input = *pInput;
+	Ctx.m_pTileEditor = &m_TileEditor;
 
-	if(!ActiveCore(&Ctx.m_LocalClientId))
+	// [Gate 0] master switch and a live tee (reference spec 12.2, first check of ProcessInput).
+	if(!IsEnabled() || !ActiveCore(&Ctx.m_LocalClientId))
 	{
 		m_Telemetry.m_State = STATE_OFF;
 		m_Telemetry.m_Enabled = IsEnabled();
 		m_Telemetry.m_Agent = Agent();
-		m_LastOverrideActive = false;
-		return FinishInput(false, pInput, Ctx.m_Tick);
-	}
-
-	if(!IsEnabled())
-	{
-		m_Telemetry.m_State = STATE_OFF;
-		m_Telemetry.m_Enabled = false;
-		m_Telemetry.m_Agent = Agent();
 		m_Telemetry.m_SurvivalTicks = 0;
 		m_Telemetry.m_CostMs = 0.0f;
 		m_vLastPath.clear();
 		m_LastOverrideActive = false;
-		return FinishInput(false, pInput, Ctx.m_Tick);
-	}
-
-	CheckAfkProtection(Ctx.m_Settings, Ctx);
-	if(!IsEnabled())
-	{
-		// AFK protection just fired: it has to take effect on this very tick, otherwise the bot
-		// would keep steering after it announced that it stopped.
-		m_Telemetry.m_Enabled = false;
-		m_Telemetry.m_Agent = Agent();
-		m_Telemetry.m_SurvivalTicks = 0;
-		m_Telemetry.m_CostMs = 0.0f;
-		m_vLastPath.clear();
-		m_LastOverrideActive = false;
+		m_LastAimTargetValid = false;
+		m_LastGate = PRE_OK;
 		return FinishInput(false, pInput, Ctx.m_Tick);
 	}
 
@@ -396,25 +529,104 @@ CAvoid::EInputResult CAvoid::ApplyInput(CNetObj_PlayerInput *pInput)
 	{
 		m_LastDecisionTick = Ctx.m_Tick;
 
+		// The AFK clock is fed every tick, before any gate reads it. It measures the sampled
+		// hardware input, not what the previous tick happened to send.
+		UpdateAfkTimer(pInput);
+
 		Avoid::AvoidInput Action;
 		Action.m_Input = Ctx.m_Input;
 		const int64_t StartTime = time_get();
 
-		const int AgentId = Agent();
-		Avoid::BLAgent *pAgent = (AgentId >= 0 && AgentId < NUM_AGENTS) ? m_apAgents[AgentId] : nullptr;
-		if(pAgent)
+		// [Stage 1] The five environment gates. A blocked tick never reaches an agent, so the
+		// player's input is passed through exactly as sampled.
+		const EPreActivation PreviousGate = m_LastGate;
+		const EPreActivation Gate = PreActivation();
+		m_LastGate = Gate;
+		if(Gate == PRE_AFK && PreviousGate != PRE_AFK)
 		{
-			Action = pAgent->GetAction(Ctx, Avoid::GetActiveWorld(GameClient()));
+			// Announced once per idle stretch. The bot is not switched off: it stops steering while
+			// the player is gone and takes over again with the next input.
+			GameClient()->Echo(BcLocalize("Avoid: AFK protection paused the bot"));
+		}
+		if(Gate != PRE_OK)
+		{
+			str_copy(Action.m_aReason, PreActivationName(Gate));
+		}
+		else if(CGameWorld *pWorld = Avoid::GetActiveWorld(GameClient()))
+		{
+			const int AgentId = Ctx.m_Settings.m_Agent;
+			Avoid::BLAgent *pAgent = (AgentId >= 0 && AgentId < NUM_AGENTS) ? m_apAgents[AgentId] : nullptr;
+
+			// [Gate 5] The 10 tick baseline probe (assembly 0x140312258). Surviving at least
+			// PROBE_SAFE_TICKS of the window means the player has margin, and the expensive
+			// machinery below is skipped entirely - no MCTS, no clone storm, no micro twitching.
+			//
+			// The two planners are deliberately left out of this gate: Fentbot and Pilot navigate
+			// by themselves and their search only advances while they are called, so probing them
+			// would leave them without a plan exactly when one is needed. They keep their own
+			// per-tick budget and their own plan guard, which is what stops them from steering an
+			// input that is already safe. The three avoid agents are the ones this gate exists for.
+			const bool ProbeGated = AgentId != AGENT_FENTBOT && AgentId != AGENT_PILOT;
+			const int Probe = ProbeGated ? RunLightweightProbe(pWorld, pInput, Ctx.m_Settings) : 0;
+			if(ProbeGated && Probe == Avoid::SIMULATION_SAFE_CONSTANT)
+			{
+				m_LastGate = PRE_SAFE;
+				Action.m_SurvivalTicks = Avoid::PROBE_CHECK_TICKS;
+				str_copy(Action.m_aReason, PreActivationName(PRE_SAFE));
+			}
+			else
+			{
+				// [Stage 2] Crosshair pre-processing (reference spec 5.6, 0x1403122d3). The sweep
+				// runs before the agent and rewrites the aim the agent will work from; when it
+				// accepts a ray, that aim is an intervention of its own.
+				const int AimX = Action.m_Input.m_TargetX;
+				const int AimY = Action.m_Input.m_TargetY;
+				const bool Swept = Avoid::RunSectorScan(GameClient(), pWorld, &Action.m_Input,
+					Ctx.m_Settings, &Action.m_AimTarget);
+				const bool CrosshairLocked = Swept &&
+							     (Action.m_Input.m_TargetX != AimX || Action.m_Input.m_TargetY != AimY);
+
+				Avoid::SContext AgentCtx = Ctx;
+				AgentCtx.m_Input = Action.m_Input;
+
+				// [Stage 3] Dispatch to the selected agent.
+				if(pAgent)
+				{
+					const Avoid::AvoidInput AgentAction = pAgent->GetAction(AgentCtx, pWorld);
+					if(AgentAction.m_Active)
+					{
+						Action = AgentAction;
+					}
+					else
+					{
+						Action.m_SurvivalTicks = AgentAction.m_SurvivalTicks;
+						Action.m_UsedFallback = AgentAction.m_UsedFallback;
+						str_copy(Action.m_aReason, AgentAction.m_aReason);
+						if(CrosshairLocked)
+						{
+							// Nothing else was worth doing, but the locked crosshair still has to
+							// reach the server, so this tick counts as an intervention.
+							Action.m_Active = 1;
+							str_copy(Action.m_aReason, "sector scan locked the crosshair");
+						}
+					}
+				}
+				else
+				{
+					str_copy(Action.m_aReason, "agent unavailable");
+				}
+			}
 		}
 		else
 		{
-			str_copy(Action.m_aReason, "agent unavailable");
+			str_copy(Action.m_aReason, "no world");
 		}
 
 		const float CostMs = (float)((double)(time_get() - StartTime) * 1000.0 / (double)time_freq());
 
 		m_LastOverrideActive = Action.m_Active != 0;
 		m_LastOverride = Action.m_Input;
+		m_LastAimTargetValid = Action.m_Active != 0 && Action.m_AimTarget.m_Valid;
 		if(Action.m_Active)
 		{
 			m_Telemetry.m_Overrides++;
@@ -425,6 +637,8 @@ CAvoid::EInputResult CAvoid::ApplyInput(CNetObj_PlayerInput *pInput)
 
 		m_vLastPath = Action.m_vPath;
 		UpdateTelemetry(Action, CostMs);
+		if(Gate == PRE_AFK)
+			m_Telemetry.m_State = STATE_AFK;
 	}
 
 	return FinishInput(m_LastOverrideActive, pInput, Ctx.m_Tick);
@@ -468,6 +682,8 @@ void CAvoid::OnRender()
 	if(GameClient()->m_Snap.m_SpecInfo.m_Active && GameClient()->m_Snap.m_LocalClientId < 0)
 		return;
 
+	UpdateTileEditor();
+
 	const int AgentId = Agent();
 	if(AgentId >= 0 && AgentId < NUM_AGENTS && m_apAgents[AgentId])
 		m_apAgents[AgentId]->OnRender();
@@ -478,6 +694,11 @@ void CAvoid::OnRender()
 		if(pCore)
 			RenderWorldOverlay(*pCore);
 	}
+
+	// The editor overlay is independent of the master switch: tiles are usually painted before a
+	// planner is ever enabled, and they are what the flow field is built from.
+	if(g_Config.m_BcAvoidDrawPath)
+		RenderTileEditorOverlay();
 
 	if(IsHudVisible())
 		RenderHudModule(false);
@@ -690,6 +911,132 @@ void CAvoid::RenderWorldOverlay(const CCharacterCore &Core)
 	}
 
 	Graphics()->TextureClear();
+	Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+	Graphics()->MapScreen(PreviousScreen);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tile editor (reference spec 9)
+// ---------------------------------------------------------------------------------------------
+
+void CAvoid::UpdateTileEditor()
+{
+	CCollision *pCollision = Collision();
+	if(!pCollision || pCollision->GetWidth() <= 0 || pCollision->GetHeight() <= 0)
+		return;
+
+	// One shot actions. They reset themselves, so a value that ended up in the config file cannot
+	// replay the action on the next start.
+	if(g_Config.m_BcAvoidTileEditorClear)
+	{
+		g_Config.m_BcAvoidTileEditorClear = 0;
+		m_TileEditor.ClearAll();
+		GameClient()->Echo(BcLocalize("Avoid tile editor: all edited tiles cleared"));
+	}
+
+	if(g_Config.m_BcAvoidTileEditorAutoFinish)
+	{
+		g_Config.m_BcAvoidTileEditorAutoFinish = 0;
+		const int Found = m_TileEditor.AutoFinish(pCollision);
+		char aBuf[128];
+		str_format(aBuf, sizeof(aBuf), "%s: %d", BcLocalize("Avoid tile editor: finish tiles marked"), Found);
+		GameClient()->Echo(aBuf);
+	}
+
+	if(g_Config.m_BcAvoidTileEditorAutoTunnel)
+	{
+		g_Config.m_BcAvoidTileEditorAutoTunnel = 0;
+		std::vector<vec2> vTrajectory;
+		const std::vector<CTas::STasTick> &vTicks = GameClient()->m_Tas.Ticks();
+		vTrajectory.reserve(vTicks.size());
+		for(const CTas::STasTick &Tick : vTicks)
+			vTrajectory.push_back(Tick.m_Pos);
+
+		const int Marked = m_TileEditor.AutoTunnels(vTrajectory,
+			g_Config.m_BcAvoidTileEditorAutoTunnelWidth,
+			pCollision->GetWidth(), pCollision->GetHeight());
+		char aBuf[128];
+		if(vTrajectory.empty())
+			str_copy(aBuf, BcLocalize("Avoid tile editor: no TAS replay loaded"));
+		else
+			str_format(aBuf, sizeof(aBuf), "%s: %d", BcLocalize("Avoid tile editor: tunnel tiles marked"), Marked);
+		GameClient()->Echo(aBuf);
+	}
+
+	// In world editing. The menu and the console own the cursor while they are open.
+	if(!g_Config.m_BcAvoidTileEditorEnable)
+		return;
+	if(GameClient()->m_Menus.IsActive() || GameClient()->m_GameConsole.IsActive())
+		return;
+
+	const bool LeftClick = Input()->KeyIsPressed(KEY_MOUSE_1);
+	const bool RightClick = Input()->KeyIsPressed(KEY_MOUSE_2);
+	if(!LeftClick && !RightClick)
+		return;
+
+	m_TileEditor.Interact(pCollision->GetWidth(), pCollision->GetHeight(),
+		GameClient()->m_Controls.m_aTargetPos[g_Config.m_ClDummy],
+		LeftClick, RightClick, g_Config.m_BcAvoidTileEditorType);
+}
+
+void CAvoid::RenderTileEditorOverlay()
+{
+	CCollision *pCollision = Collision();
+	if(!pCollision || pCollision->GetWidth() <= 0 || pCollision->GetHeight() <= 0)
+		return;
+	if(!m_TileEditor.HasTunnels() && !m_TileEditor.HasFinish())
+		return;
+	if(Graphics()->ScreenAspect() <= 0.0f || GameClient()->m_Camera.m_Zoom <= 0.0f)
+		return;
+
+	const CScreenRect PreviousScreen = Graphics()->GetScreen();
+	const CScreenRect WorldScreen = Graphics()->MapScreenToWorld(
+		GameClient()->m_Camera.m_Center.x,
+		GameClient()->m_Camera.m_Center.y,
+		100.0f, 100.0f, 100.0f, 0, 0,
+		Graphics()->ScreenAspect(),
+		GameClient()->m_Camera.m_Zoom);
+	Graphics()->MapScreen(WorldScreen);
+
+	// Only the tiles that can be on screen are built into the batch.
+	const int MinX = std::max(0, (int)std::floor(WorldScreen.m_TopLeft.x / TILE_SIZE) - 1);
+	const int MinY = std::max(0, (int)std::floor(WorldScreen.m_TopLeft.y / TILE_SIZE) - 1);
+	const int MaxX = std::min(pCollision->GetWidth() - 1, (int)std::floor(WorldScreen.m_BottomRight.x / TILE_SIZE) + 1);
+	const int MaxY = std::min(pCollision->GetHeight() - 1, (int)std::floor(WorldScreen.m_BottomRight.y / TILE_SIZE) + 1);
+
+	static std::vector<IGraphics::CQuadItem> s_vTunnel;
+	static std::vector<IGraphics::CQuadItem> s_vFinish;
+	s_vTunnel.clear();
+	s_vFinish.clear();
+	for(int y = MinY; y <= MaxY; ++y)
+	{
+		for(int x = MinX; x <= MaxX; ++x)
+		{
+			const float TileX = (float)x * TILE_SIZE;
+			const float TileY = (float)y * TILE_SIZE;
+			if(m_TileEditor.IsFinish(x, y))
+				s_vFinish.emplace_back(TileX + 2.0f, TileY + 2.0f, TILE_SIZE - 4.0f, TILE_SIZE - 4.0f);
+			else if(m_TileEditor.IsTunnel(x, y))
+				s_vTunnel.emplace_back(TileX + 4.0f, TileY + 4.0f, TILE_SIZE - 8.0f, TILE_SIZE - 8.0f);
+		}
+	}
+
+	Graphics()->TextureClear();
+	if(!s_vTunnel.empty())
+	{
+		Graphics()->QuadsBegin();
+		Graphics()->SetColor(0.25f, 0.62f, 1.00f, 0.16f);
+		Graphics()->QuadsDrawTL(s_vTunnel.data(), (int)s_vTunnel.size());
+		Graphics()->QuadsEnd();
+	}
+	if(!s_vFinish.empty())
+	{
+		Graphics()->QuadsBegin();
+		Graphics()->SetColor(0.35f, 0.95f, 0.45f, 0.22f);
+		Graphics()->QuadsDrawTL(s_vFinish.data(), (int)s_vFinish.size());
+		Graphics()->QuadsEnd();
+	}
+
 	Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
 	Graphics()->MapScreen(PreviousScreen);
 }

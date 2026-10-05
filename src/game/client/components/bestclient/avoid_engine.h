@@ -2,8 +2,12 @@
 #ifndef GAME_CLIENT_COMPONENTS_BESTCLIENT_AVOID_ENGINE_H
 #define GAME_CLIENT_COMPONENTS_BESTCLIENT_AVOID_ENGINE_H
 
+#include "avoid_decision.h"
+
 #include <base/vmath.h>
+
 #include <generated/protocol.h>
+
 #include <game/gamecore.h>
 
 #include <deque>
@@ -13,6 +17,11 @@ class CCharacter;
 class CCollision;
 class CGameClient;
 class CGameWorld;
+
+namespace Avoid
+{
+	class CTileEditor;
+}
 
 /* --------------------------------------------------------------------------------------------
  * Avoid decision engine.
@@ -144,6 +153,8 @@ namespace Avoid
 		int m_LocalClientId = -1;
 		CNetObj_PlayerInput m_Input{};
 		SSettings m_Settings{};
+		// Goal set and movement restriction of the two planners, owned by the component.
+		const CTileEditor *m_pTileEditor = nullptr;
 	};
 
 	struct SAimMarker
@@ -175,6 +186,61 @@ namespace Avoid
 	vec2 AimDirection(int TargetX, int TargetY);
 	bool AimTargetsFrom(vec2 Dir, int *pTargetX, int *pTargetY);
 	bool IsHookable(CCollision *pCollision, vec2 From, vec2 Dir, float HookLength, vec2 *pOutPos = nullptr);
+
+	// Blatant (reference spec 6.4): nearest TILE_UNFREEZE inside RadiusTiles, breadth first.
+	bool FindNearestUnfreezeTile(CCollision *pCollision, vec2 From, int RadiusTiles, vec2 *pOutCentre);
+
+	// ---------------------------------------------------------------------------------------
+	// Pre-activation pipeline (reference spec 5). Both functions are the heavy half of the
+	// dispatcher: they run after the five environment gates of CAvoid::ApplyInput allowed it.
+	// ---------------------------------------------------------------------------------------
+
+	// Reference spec 5.5: the 10 tick baseline probe over the player's own input. Returns
+	// SIMULATION_SAFE_CONSTANT when the input survives at least PROBE_SAFE_TICKS of the window -
+	// the dispatcher then skips the agents completely, which is what keeps a safe player at 0%
+	// wake-ups and full frame rate - and the raw survival count when it does not.
+	int RunLightweightProbe(CGameClient *pClient, CGameWorld *pBaseWorld, const CNetObj_PlayerInput &Input, const SSettings &Set);
+
+	// Reference spec 5.6: sweeps the field of view around the player's crosshair in
+	// krx_avoid_tile_aimbot_segments steps and, when the switch rules allow it, locks the crosshair
+	// onto the scanned ray that survived longest. Returns true once the sweep ran, which is what
+	// tells the Blatant aim layer that the crosshair is already the winner of that scan; whether
+	// the aim was actually rewritten can be seen by comparing m_TargetX/m_TargetY around the call.
+	bool RunSectorScan(CGameClient *pClient, CGameWorld *pBaseWorld, CNetObj_PlayerInput *pInput, const SSettings &Set, SAimMarker *pOutAim = nullptr);
+
+	// ---------------------------------------------------------------------------------------
+	// v5.1 airborne rescue mechanisms (reference spec 5.7 - 5.9)
+	//
+	// All three are world probes plus a lookahead, so they live here instead of in the pure
+	// decision header. Every one of them is entirely self contained: it returns false (and leaves
+	// pOutInput alone) whenever it has no business touching the input, so a caller can chain them
+	// in the reference priority order without checking anything itself.
+	// ---------------------------------------------------------------------------------------
+
+	// Reference spec 7.2: the air-jump axis only exists while the tee is off the ground and still
+	// owns its air jump (bit 2 of m_Jumped is the "all jumps used up" flag, not bit 1 - that one
+	// only means a jump was made on the currently held key).
+	bool CanUseAirJump(CGameWorld *pWorld, int LocalClientId);
+
+	// Reference spec 5.7 (assembly 0x1403286f0 - 0x1403289e0): a tee hanging from a hook swings
+	// around its anchor. Holding the hook drags it into the freeze below the pendulum's low point,
+	// letting go at the tangent converts the swing into a flight that clears the pool. Both
+	// branches are simulated and the hook key is taken away from the player only when that is
+	// measurably better. Returns true when the release was forced.
+	bool CheckPreemptiveHookRelease(CGameClient *pClient, CGameWorld *pWorld, const CNetObj_PlayerInput &CurrentInput, CNetObj_PlayerInput *pOutInput, int CheckTicks, const SSimFlags &Flags);
+
+	// Reference spec 5.8: is there room above Pos for an air jump, i.e. no ceiling closer than one
+	// tile and nothing lethal or freezing overhead?
+	bool CheckHeadroomClearance(CCollision *pCollision, vec2 Pos, float RequiredHeight);
+
+	// Reference spec 5.8: spends the tee's air jump when it is falling into a hazard, the headroom
+	// allows it and the jump buys at least AIR_JUMP_MIN_GAIN_TICKS over doing nothing.
+	bool TryEmergencyAirJump(CGameClient *pClient, CGameWorld *pWorld, const CNetObj_PlayerInput &CurrentInput, CNetObj_PlayerInput *pOutInput, int CheckTicks, const SSimFlags &Flags);
+
+	// Reference spec 5.9: ignores the crosshair completely and casts the five upper hemisphere
+	// escape rays up to the maximum hook reach. The first ray with a hookable surface is hooked,
+	// with the horizontal key leaning into the pull when that survives longer.
+	bool TryEmergencyWallCeilingHook(CGameClient *pClient, CGameWorld *pWorld, const CNetObj_PlayerInput &CurrentInput, CNetObj_PlayerInput *pOutInput, int CheckTicks, const SSimFlags &Flags);
 
 	// ---------------------------------------------------------------------------------------
 	// Forward simulator (reference func_0x00014036a8d0)
@@ -253,8 +319,13 @@ namespace Avoid
 	//
 	// The grid is built incrementally: every Update() call spends at most MaxWork tile visits so
 	// that a whole map never blocks a frame. Rebuild() invalidates it (map change, settings
-	// change). Light freeze tiles become navigable when an unfreeze tile is close enough, which is
-	// the reference "light tile" rule.
+	// change, tile edit). Light freeze tiles become navigable when an unfreeze tile is close enough,
+	// which is the reference "light tile" rule.
+	//
+	// The goal set and the movement restriction come from the tile editor (reference spec 9): when
+	// the editor has finish tiles they are the goals, and when it has tunnel tiles the search is
+	// confined to them. With an empty editor the planner falls back to the map's own TILE_FINISH
+	// and, if the map has none, to the unfreeze tiles.
 	// ---------------------------------------------------------------------------------------
 	class CNavigator
 	{
@@ -282,12 +353,15 @@ namespace Avoid
 		void Reset();
 		// Starts (or restarts) a build for the given map. The light-tile rule is a property of the
 		// build, not of every query, so it is fixed here and reported back through LightTile() and
-		// LightRadius() to let the caller notice a settings change.
-		void Rebuild(CCollision *pCollision, bool LightTile, int LightRadius);
+		// LightRadius() to let the caller notice a settings change. The editor pointer may be null;
+		// it is only read while the grid is built, so it has to outlive the build.
+		void Rebuild(CCollision *pCollision, bool LightTile, int LightRadius, const CTileEditor *pEditor = nullptr);
 		// Advances the build, returns true once the field is usable again.
 		bool Update(CCollision *pCollision, int MaxWork);
 		bool LightTile() const { return m_LightTile; }
 		int LightRadius() const { return m_LightRadius; }
+		// Revision of the tile editor the running grid was built from.
+		unsigned EditorRevision() const { return m_EditorRevision; }
 
 	private:
 		enum EPhase
@@ -320,6 +394,8 @@ namespace Avoid
 		int m_Phase = PHASE_IDLE;
 		bool m_LightTile = false;
 		int m_LightRadius = 0;
+		const CTileEditor *m_pEditor = nullptr;
+		unsigned m_EditorRevision = 0;
 		bool m_Ready = false;
 		bool m_Building = false;
 	};
@@ -337,7 +413,8 @@ namespace Avoid
 		CGameClient *m_pClient = nullptr;
 
 	public:
-		BLAgent(CGameClient *pClient) : m_pClient(pClient) {}
+		BLAgent(CGameClient *pClient) :
+			m_pClient(pClient) {}
 		virtual ~BLAgent() = default;
 
 		virtual AvoidInput GetAction(const SContext &Ctx, CGameWorld *pWorld) = 0;
@@ -351,7 +428,8 @@ namespace Avoid
 	class CBasicAgent : public BLAgent
 	{
 	public:
-		CBasicAgent(CGameClient *pClient) : BLAgent(pClient) {}
+		CBasicAgent(CGameClient *pClient) :
+			BLAgent(pClient) {}
 		AvoidInput GetAction(const SContext &Ctx, CGameWorld *pWorld) override;
 	};
 
@@ -359,7 +437,8 @@ namespace Avoid
 	class CLegitAgent : public BLAgent
 	{
 	public:
-		CLegitAgent(CGameClient *pClient) : BLAgent(pClient) {}
+		CLegitAgent(CGameClient *pClient) :
+			BLAgent(pClient) {}
 		AvoidInput GetAction(const SContext &Ctx, CGameWorld *pWorld) override;
 	};
 
@@ -372,7 +451,8 @@ namespace Avoid
 		std::vector<CNetObj_PlayerInput> m_SavedSafeSequence;
 
 	public:
-		CBlatantAgent(CGameClient *pClient) : BLAgent(pClient) {}
+		CBlatantAgent(CGameClient *pClient) :
+			BLAgent(pClient) {}
 		void OnReset() override;
 		AvoidInput GetAction(const SContext &Ctx, CGameWorld *pWorld) override;
 	};
@@ -410,7 +490,8 @@ namespace Avoid
 		void Breed(const SSettings &Set);
 
 	public:
-		CFentbotAgent(CGameClient *pClient) : BLAgent(pClient) {}
+		CFentbotAgent(CGameClient *pClient) :
+			BLAgent(pClient) {}
 		~CFentbotAgent() override;
 		void OnReset() override;
 		AvoidInput GetAction(const SContext &Ctx, CGameWorld *pWorld) override;
@@ -450,7 +531,8 @@ namespace Avoid
 		void Breed(const SSettings &Set);
 
 	public:
-		CPilotAgent(CGameClient *pClient) : BLAgent(pClient) {}
+		CPilotAgent(CGameClient *pClient) :
+			BLAgent(pClient) {}
 		~CPilotAgent() override;
 		void OnReset() override;
 		AvoidInput GetAction(const SContext &Ctx, CGameWorld *pWorld) override;

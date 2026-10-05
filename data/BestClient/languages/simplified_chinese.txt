@@ -1,4 +1,12 @@
 [BestClient]
+Track point already makes the bot sweep your field of view for a safer crosshair; the rest of the aim layer needs the internal aimbot on the Aimbot tab.
+== 只开 Track point，机器人就会扫描视野寻找更安全的准星方向；瞄准层的其余部分需要到 Aimbot 页打开内部自瞄。
+
+[BestClient]
+Check ticks is how far ahead every simulated move has to stay safe. Turning an assistance off keeps that part of your input exactly as you pressed it. A move is only taken over when it survives at least one tick longer than your own input over the next 26 ticks.
+== Check ticks 是每个模拟动作必须保持安全的帧数；关掉某项辅助就表示那一部分输入完全按你按的原样输出。只有当选出的动作在接下来 26 帧里比你的原输入至少多活 1 帧时，机器人才会接管。
+
+[BestClient]
 Checkbox
 == 复选框
 
@@ -3211,8 +3219,8 @@ AFK
 == 挂机
 
 [BestClient]
-Avoid: AFK protection disabled the bot
-== 避障：挂机保护已自动关闭机器人
+Avoid: AFK protection paused the bot
+== 避障：挂机保护已暂停机器人接管
 
 [BestClient]
 Plan:
@@ -3287,8 +3295,8 @@ Player prediction
 == 预测其他玩家
 
 [BestClient]
-Player prediction makes every bot simulate the other tees as well; AFK protection switches the bot off after the configured idle time.
-== 开启后机器人会一并推演其他 Tee 的移动；挂机保护会在设定时间内无任何操作后自动关闭机器人。
+Player prediction makes every bot simulate the other tees as well; AFK protection pauses the bot after the configured idle time.
+== 开启后机器人会一并推演其他 Tee 的移动；挂机保护会在设定时间内无任何操作后暂停机器人接管。
 
 [BestClient]
 Render track point
@@ -3305,10 +3313,6 @@ Basic only takes over the left and right keys. It always looks six ticks ahead, 
 [BestClient]
 It is the cheapest bot and the safe default for plain freeze rooms. Pick Legit for fine tuning, Blatant for maximum safety, Fentbot for long map segments or Pilot to let the tee drive itself.
 == 它开销最低，是普通冻结房间的稳妥默认值。需要细调选拟真，追求最高安全性选激进，长距离路段选 Fentbot，想让 Tee 自己跑就选 Pilot。
-
-[BestClient]
-Check ticks is how far ahead every simulated move has to stay safe. Turning an assistance off keeps that part of your input exactly as you pressed it.
-== 检查帧数指每个模拟动作必须保持安全的帧数。关闭某项接管后，这部分输入将完全保持你的原始操作。
 
 [BestClient]
 Priority
@@ -3477,4 +3481,80 @@ Track point, safe aim tracking and auto drag need the internal aimbot on the Aim
 [BestClient]
 safe
 == 安全
+
+[BestClient]
+Tile Editor
+== 图块编辑器
+
+[BestClient]
+Tile editor
+== 图块编辑器
+
+[BestClient]
+Enable editor
+== 启用编辑器
+
+[BestClient]
+Tile type
+== 图块类型
+
+[BestClient]
+Tunnel
+== 隧道
+
+[BestClient]
+Finish
+== 终点
+
+[BestClient]
+Auto tunnels
+== 自动隧道
+
+[BestClient]
+Auto tunnel width
+== 自动隧道宽度
+
+[BestClient]
+Recalculate
+== 重新计算
+
+[BestClient]
+Auto finish
+== 自动终点
+
+[BestClient]
+Clear all
+== 全部清除
+
+[BestClient]
+Tunnel tiles
+== 隧道图块
+
+[BestClient]
+Finish tiles
+== 终点图块
+
+[BestClient]
+Avoid tile editor: all edited tiles cleared
+== 避障图块编辑器：已清除所有编辑过的图块
+
+[BestClient]
+Avoid tile editor: finish tiles marked
+== 避障图块编辑器：已标记终点图块
+
+[BestClient]
+Avoid tile editor: tunnel tiles marked
+== 避障图块编辑器：已标记隧道图块
+
+[BestClient]
+Avoid tile editor: no TAS replay loaded
+== 避障图块编辑器：未加载 TAS 回放
+
+[BestClient]
+Avoid tile editor: pathfinding grid recalculated
+== 避障图块编辑器：寻路网格已重新计算
+
+[BestClient]
+Tunnel tiles are the only tiles Fentbot and Pilot may walk on, finish tiles are what they navigate to. With an empty editor the planner uses the finish tiles of the map and falls back to the unfreeze tiles. Turn the editor on and click in the world to paint, right click to erase; a loaded TAS replay can be turned into a tunnel with Auto tunnels.
+== 隧道图块是 Fentbot 与 Pilot 唯一可以行走的图块，终点图块是它们导航的目标。编辑器为空时，规划器会使用地图的终点图块，并回退到解冻图块。开启编辑器后在世界中点击即可绘制，右键擦除；加载的 TAS 回放可以用“自动隧道”变成隧道。
 
